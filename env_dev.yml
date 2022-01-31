@@ -13,7 +13,6 @@ dependencies:
   - numpy
   - pandas
   - pip
-  - plotly
   - python >= 3.9
   - scikit-image
   - scikit-learn

@@ -70,8 +70,10 @@ def _run_single_experiment(
     verbose: bool = True,
 ) -> Optional[pte_decode.Experiment]:
     """Run experiment with single file."""
-    import pte
-    from py_neuromodulation import nm_analysis
+    import pte  # pylint: disable=import-outside-toplevel
+    from py_neuromodulation import (
+        nm_analysis,
+    )  # pylint: disable=import-outside-toplevel
 
     if verbose:
         print("Using file: ", feature_file)

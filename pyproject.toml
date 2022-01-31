@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.black]
 line-length = 79
-target-version = ['py39']
+target-version = ['py310']
 exclude = '''
 /(
     \.git
@@ -22,5 +22,5 @@ exclude = '''
 [tool.isort]
 profile = "black"
 line_length = 79
-py_version = 39
-src_paths = ["pte"]
+py_version = 310
+src_paths = ["pte-decode"]
