@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.black]
+line-length = 79
+target-version = ['py39']
+exclude = '''
+/(
+    \.git
+  | \.tox
+  | .gitignore
+  | environment.yml
+  | environment_dev.yml
+  | LICENSE
+  | pylintrc
+  | README.md
+  | setup.cfg
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 79
+py_version = 39
+src_paths = ["pte"]
