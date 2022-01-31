@@ -5,7 +5,6 @@ from typing import Optional, Sequence, Union
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
-from py_neuromodulation import nm_analysis
 
 import pte_decode
 
@@ -71,6 +70,9 @@ def _run_single_experiment(
     verbose: bool = True,
 ) -> Optional[pte_decode.Experiment]:
     """Run experiment with single file."""
+    import pte
+    from py_neuromodulation import nm_analysis
+
     if verbose:
         print("Using file: ", feature_file)
 

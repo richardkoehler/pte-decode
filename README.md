@@ -8,9 +8,9 @@
 
 PTE Decode is an open-source software package for neural decoding.
 
-It builds upon [PTE](https://github.com/richardkoehler/pte) and aims at decoding intracranial EEG (iEEG) such as local field potentials (LFP) electrocorticography (ECoG).
+It builds upon [PTE](https://github.com/richardkoehler/pte) and aims at decoding intracranial EEG (iEEG) signals such as local field potentials (LFP) electrocorticography (ECoG).
 
-PTE Decode provides functions for sample-wise decoding and lets you define epochs based on specific events to avoid circular training.
+PTE Decode implements sample-wise decoding and lets you define epochs based on specific events to avoid circular training.
 
 ## Installing PTE Decode
 
