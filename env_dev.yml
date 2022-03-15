@@ -14,12 +14,12 @@ dependencies:
   - pandas
   - pip
   - python >= 3.9
-  - scikit-image
   - scikit-learn
   - scipy
   - seaborn
   - xgboost
   - pip:
+    - pte-stats
     - statannotations 
   # development dependencies
   - black
