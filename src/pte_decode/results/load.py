@@ -12,27 +12,20 @@ import pte
 
 def load_results_singlechannel(
     files_or_dir: Union[str, list, Path],
-    keywords: Optional[Union[str, list]] = None,
     scoring_key: str = "balanced_accuracy",
     average_runs: bool = False,
 ) -> pd.DataFrame:
     """Load results from *results.csv"""
     # Create Dataframes from Files
-    if not isinstance(files_or_dir, list):
-        file_finder = pte.get_filefinder(datatype="any")
-        file_finder.find_files(
-            directory=files_or_dir,
-            keywords=keywords,
-            extensions=["results.csv"],
-            verbose=True,
-        )
-        files_or_dir = file_finder.files
+    files_or_dir = _handle_files_or_dir(
+        files_or_dir=files_or_dir, extensions="results.csv"
+    )
     results = []
     for file in files_or_dir:
         subject = mne_bids.get_entities_from_fname(file, on_error="ignore")[
             "subject"
         ]
-        data: pd.DataFrame = pd.read_csv(
+        data: pd.DataFrame = pd.read_csv( # type: ignore
             file,
             index_col="channel_name",
             header=0,
@@ -40,8 +33,10 @@ def load_results_singlechannel(
         )
         for ch_name in data.index.unique():
             score = (
-                data.loc[ch_name].mean(numeric_only=True).values[0]
-            )  # type: ignore
+                data.loc[ch_name].mean(
+                    numeric_only=True
+                    ).values[0]  # type: ignore
+            )
             results.append([subject, ch_name, score])
     columns = [
         "Subject",
@@ -63,20 +58,13 @@ def load_results_singlechannel(
 
 def load_results(
     files_or_dir: Union[str, list, Path],
-    keywords: Optional[Union[str, list]] = None,
     scoring_key: str = "balanced_accuracy",
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Load prediciton results from *results.csv"""
     # Create Dataframes from Files
-    if not isinstance(files_or_dir, list):
-        file_finder = pte.get_filefinder(datatype="any")
-        file_finder.find_files(
-            directory=files_or_dir,
-            keywords=keywords,
-            extensions=["results.csv"],
-            verbose=True,
-        )
-        files_or_dir = file_finder.files
+    files_or_dir = _handle_files_or_dir(
+        files_or_dir=files_or_dir, extensions="results.csv"
+    )
     results = []
     for file in files_or_dir:
         data_raw = pd.read_csv(file, index_col=[0], header=[0])
@@ -146,16 +134,15 @@ def load_results(
 
 def _handle_files_or_dir(
     files_or_dir: Union[str, list, Path],
-    keywords: Optional[Union[str, list]] = None,
+    extensions: Optional[Union[str, list]] = None,
 ) -> list:
     """Handle different cases of files_or_dir."""
     if isinstance(files_or_dir, list):
         return files_or_dir
-    file_finder = pte.get_filefinder(datatype="any")
+    file_finder = pte.filetools.get_filefinder(datatype="any")
     file_finder.find_files(
         directory=files_or_dir,
-        keywords=keywords,
-        extensions=["predictions_timelocked.json"],
+        extensions=extensions,
         verbose=True,
     )
     return file_finder.files
@@ -215,15 +202,14 @@ def load_predictions(
     baseline: Optional[
         tuple[Optional[Union[int, float]], Optional[Union[int, float]]]
     ] = None,
-    baseline_mode: str = "z-score",
+    baseline_mode: str = "zscore",
     average_predictions: bool = False,
     concatenate_runs: bool = True,
     average_runs: bool = False,
-    keywords: Optional[Union[str, list]] = None,
 ) -> pd.DataFrame:
     """Load time-locked predictions."""
     files_or_dir = _handle_files_or_dir(
-        files_or_dir=files_or_dir, keywords=keywords
+        files_or_dir=files_or_dir, extensions="predictions_timelocked.json"
     )
 
     base_start, base_end = _handle_baseline(baseline=baseline, sfreq=sfreq)

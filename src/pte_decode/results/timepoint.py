@@ -3,7 +3,7 @@ from typing import Iterable, Optional, Union
 
 import numpy as np
 
-import pte
+import pte_stats
 
 
 def get_earliest_timepoint(
@@ -22,11 +22,11 @@ def get_earliest_timepoint(
         threshold=threshold, sfreq=sfreq, data=data.T
     )
 
-    p_vals = pte.stats.timeseries_pvals(
+    p_vals = pte_stats.timeseries_pvals(
         x=data.T, y=threshold_value, n_perm=n_perm, two_tailed=False
     )
 
-    clusters, cluster_count = pte.stats.clusters_from_pvals(
+    clusters, cluster_count = pte_stats.clusters_from_pvals(
         p_vals=p_vals,
         alpha=alpha,
         correction_method=correction_method,

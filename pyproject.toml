@@ -1,26 +1,97 @@
 [build-system]
-requires = ["setuptools", "wheel"]
-build-backend = "setuptools.build_meta"
+build-backend = "flit_core.buildapi"
+requires = ["flit_core >=3.5,<4"]
+
+[project]
+authors = [
+  {name = "Richard Köhler"},
+]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
+description = "an open-source software package for neural decoding. ."
+dynamic = ["version"]
+keywords = ["machine learning", "bci", "eeg", "ieeg"]
+license = {file = "LICENSE.txt"}
+maintainers = [
+  {name = "Richard Köhler"},
+]
+name = "pte-decode"
+readme = {file = "README.md", content-type = "text/markdown"}
+requires-python = ">=3.9"
+
+dependencies = [
+  "requests",
+  "bayesian-optimization",
+  "catboost",
+  "imbalanced-learn",
+  "joblib",
+  "matplotlib",
+  "mne",
+  "mne-bids",
+  "numba",
+  "numpy",
+  "pandas",
+  "pip",
+  "scikit-learn",
+  "scipy",
+  "statannotations",
+  "xgboost",
+]
+
+[project.optional-dependencies]
+deploy = [
+  "flit",
+]
+dev = [
+  "black",
+  "isort",
+  "mypy",
+  "pylint",
+  "pytest",
+  "pytest-cov",
+]
+
+[project.urls]
+bugtracker = "https://github.com/richardkoehler/pte-decode/issues"
+changelog = "https://github.com/richardkoehler/pte-decode/blob/main/doc/CHANGELOG.md"
+repository = "https://github.com/richardkoehler/pte-decode"
+
+[tool.flit.module]
+name = "pte_decode"
 
 [tool.black]
-line-length = 79
-target-version = ['py310']
 exclude = '''
 /(
-    \.git
-  | \.tox
-  | .gitignore
-  | environment.yml
-  | environment_dev.yml
-  | LICENSE
-  | pylintrc
-  | README.md
-  | setup.cfg
+  __pycache__
 )/
 '''
+include = '''
+(
+    /tests
+  | /src/
+)
+'''
+line-length = 79
+target-version = ['py310']
 
 [tool.isort]
-profile = "black"
 line_length = 79
+profile = "black"
 py_version = 310
-src_paths = ["pte-decode"]
+src_paths = ["pte_decode"]
+
+[tool.mypy]
+python_version = "3.10"
+
+[[tool.mypy.overrides]]
+ignore_missing_imports = true
+module = [
+  "numba",
+  "skimage",
+  "statsmodels.stats.multitest",
+]

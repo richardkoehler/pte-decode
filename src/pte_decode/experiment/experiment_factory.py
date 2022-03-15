@@ -104,7 +104,6 @@ def _run_single_experiment(
         column_picks=plot_target_channels,
         features=features,
     )
-    print("Target channels found:", target_series.name)
 
     features_df = get_feature_df(features, use_features, use_times)
 

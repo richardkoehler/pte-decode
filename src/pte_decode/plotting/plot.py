@@ -2,7 +2,7 @@
 import os
 from itertools import combinations, product
 from pathlib import Path
-from typing import Callable, Iterable, Optional, Union
+from typing import Callable, Iterable, Optional, Sequence, Union
 
 import numpy as np
 import pandas as pd
@@ -13,7 +13,8 @@ from scipy import stats
 from statannotations import Annotator
 from statannotations.stats import StatTest
 
-import pte
+import pte_decode
+import pte_stats
 
 
 def violinplot_results(
@@ -22,25 +23,25 @@ def violinplot_results(
     x: str,
     y: str,
     hue: Optional[str] = None,
-    order: Optional[Iterable] = None,
-    hue_order: Optional[Iterable] = None,
+    order: Optional[Union[Sequence, np.ndarray]] = None,
+    hue_order: Optional[Union[Sequence, np.ndarray]] = None,
     stat_test: Optional[Union[Callable, str]] = "Permutation",
-    alpha: Optional[float] = 0.05,
+    alpha: float = 0.05,
     add_lines: Optional[str] = None,
     title: Optional[str] = "Classification Performance",
     figsize: Union[tuple, str] = "auto",
 ) -> None:
-    """Plot performance as combined boxplot and stripplot."""
-    if not order:
+    """Plot performance as violinplot."""
+    if order is None:
         order = data[x].unique()
 
-    if hue and not hue_order:
+    if hue and hue_order is None:
         hue_order = data[hue].unique()
 
     if figsize == "auto":
         hue_factor = 1 if not hue else len(hue_order)
         figsize = (1.1 * len(order) * hue_factor, 4)
-
+        
     fig, ax = plt.subplots(nrows=1, ncols=1, figsize=figsize)
 
     ax = sns.violinplot(
@@ -238,11 +239,11 @@ def _add_lines(
     data: pd.DataFrame,
     x: str,
     y: str,
-    order: list,
+    order: list[str],
     add_lines: str,
 ):
     """Add lines connecting single dots"""
-    data = data.sort_values(
+    data = data.sort_values(  # type: ignore
         by=x, key=lambda k: k.map({item: i for i, item in enumerate(order)})
     )
     lines = (
@@ -299,6 +300,7 @@ def _add_stats(
         alpha=alpha,
         test=stat_test,
         text_format="simple",
+        show_test_name=False,
         loc=location,
         color="grey",
     )
@@ -377,7 +379,7 @@ def lineplot_prediction(
         )
         axs[2].set_xlabel("Time [s]")
 
-        p_vals = pte.stats.timeseries_pvals(
+        p_vals = pte_stats.timeseries_pvals(
             x=x, y=y, n_perm=n_perm, two_tailed=two_tailed
         )
 
@@ -423,10 +425,10 @@ def lineplot_prediction(
 def _permutation_wrapper(x, y, n_perm) -> tuple:
     """Wrapper for statannotations to convert pandas series to numpy array."""
     if isinstance(x, pd.Series):
-        x = x.values
+        x = x.to_numpy()
     if isinstance(y, pd.Series):
-        y = y.values
-    return pte.stats.permutation_twosample(x=x, y=y, n_perm=n_perm)
+        y = y.to_numpy()
+    return pte_stats.permutation_twosample(x=x, y=y, n_perm=n_perm)
 
 
 def _pval_correction_lineplot(
@@ -444,7 +446,7 @@ def _pval_correction_lineplot(
     if y.ndim == 1:
         y = np.expand_dims(y, axis=1)
 
-    clusters, cluster_count = pte.stats.clusters_from_pvals(
+    clusters, cluster_count = pte_stats.clusters_from_pvals(
         p_vals=p_vals,
         alpha=alpha,
         correction_method=correction_method,
@@ -499,7 +501,7 @@ def _single_lineplot(
     (
         threshold_value,
         threshold_arr,
-    ) = pte.decoding.timepoint.transform_threshold(
+    ) = pte_decode.results.timepoint.transform_threshold(
         threshold=threshold, sfreq=sfreq, data=data
     )
 
@@ -529,7 +531,7 @@ def _single_lineplot(
         linestyle="dashed",
     )
 
-    p_vals = pte.stats.timeseries_pvals(
+    p_vals = pte_stats.timeseries_pvals(
         x=data, y=threshold_value, n_perm=n_perm, two_tailed=False
     )
 

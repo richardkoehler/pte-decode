@@ -13,7 +13,7 @@ from sklearn.metrics import balanced_accuracy_score
 from sklearn.model_selection import BaseCrossValidator, GroupKFold
 
 import pte_decode
-from pte_decode.decoding.decoder_abc import Decoder
+from pte_decode.decoding.decoder_base import Decoder
 
 
 @dataclass
@@ -315,7 +315,7 @@ class Experiment:
         )
 
         # Perform classification for each selected model
-        for ch_pick, _ in zip(ch_picks, ch_types):
+        for ch_pick, _ in zip(ch_picks, ch_types, strict=True):
             cols = self._get_column_picks(self.feature_epochs, ch_pick)
             data_train = self.feature_epochs[cols]
             self.decoder.fit(
@@ -376,7 +376,7 @@ class Experiment:
         )
 
         # Perform classification for each selected model
-        for ch_pick, ch_type in zip(ch_picks, ch_types):
+        for ch_pick, ch_type in zip(ch_picks, ch_types, strict=True):
             self._run_channel_pick(
                 ch_pick,
                 ch_type,
@@ -492,7 +492,7 @@ class Experiment:
             ch_names = ["ECOG", "LFP"]
         else:
             ch_names = self.ch_names
-        ch_types = ["ECOG" if "ECOG" in ch else "LFP" for ch in self.ch_names]
+        ch_types = ["ECOG" if "ECOG" in ch else "LFP" for ch in ch_names]
         return ch_names, ch_types
 
     def _inner_loop(
