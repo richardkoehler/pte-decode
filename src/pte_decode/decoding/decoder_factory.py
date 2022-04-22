@@ -19,7 +19,7 @@ from sklearn.model_selection import GroupKFold, GroupShuffleSplit
 # from sklearn.svm import SVC
 from xgboost import XGBClassifier
 
-from pte_decode.decoding.decoder_abc import Decoder
+from pte_decode.decoding.decoder_base import Decoder
 
 
 def get_decoder(

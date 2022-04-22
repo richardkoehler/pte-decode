@@ -13,7 +13,7 @@ from sklearn.metrics import balanced_accuracy_score
 from sklearn.model_selection import BaseCrossValidator, GroupKFold
 
 import pte_decode
-from pte_decode.decoding.decoder_abc import Decoder
+from pte_decode.decoding.decoder_base import Decoder
 
 
 @dataclass
@@ -24,13 +24,17 @@ class _Results:
     label_name: str = field(repr=False)
     ch_names: list[str] = field(repr=False)
     use_channels: str = field(repr=False)
+    save_importances: bool = field(repr=False)
     predictions: dict = field(init=False, default_factory=dict)
     scores: list = field(init=False, default_factory=list)
     features: dict = field(init=False, default_factory=dict)
+    feature_importances: list = field(init=False, default_factory=list)
 
     def __post_init__(self) -> None:
         self._init_predictions()
         self._init_features()
+        if self.save_importances:
+            self.feature_importances = []
 
     def _init_features(self) -> None:
         """Initialize features dictionary."""
@@ -86,13 +90,28 @@ class _Results:
             new_data=label_data,
         )
 
+    def update_feature_importances(
+        self,
+        fold: int,
+        ch_pick: str,
+        feature_names: list[str],
+        feature_importances: Sequence,
+    ) -> None:
+        """Update feature importances."""
+        self.feature_importances.extend(
+            (
+                [fold, ch_pick, name, importance]
+                for name, importance in zip(
+                    feature_names, feature_importances, strict=True
+                )
+            )
+        )
+
     def update_scores(
         self,
         fold: int,
         ch_pick: str,
         score: Union[int, float],
-        feature_importances: Sequence,
-        feature_names: list[str],
         events_used: np.ndarray,
     ) -> None:
         """Update results."""
@@ -103,8 +122,6 @@ class _Results:
                 fold,
                 ch_pick,
                 score,
-                feature_importances,
-                feature_names,
                 events_used,
             ]
         )
@@ -124,8 +141,6 @@ class _Results:
                 "fold",
                 "channel_name",
                 scoring,
-                "feature_importances",
-                "features_used",
                 "events_used",
             ],
             index=None,
@@ -154,6 +169,22 @@ class _Results:
         ) as file:
             json.dump(self.features, file)
 
+        # Save feature importances
+        if self.feature_importances:
+            importances = pd.DataFrame(
+                self.feature_importances,
+                columns=[
+                    "fold",
+                    "channel_name",
+                    "feature_name",
+                    "feature_importance",
+                ],
+                index=None,
+            )
+            importances.to_csv(
+                path + "_feature_importances.csv", sep=",", index=False
+            )
+
     def update_predictions(
         self, predictions_data: list, ch_pick: str, ch_type: str
     ) -> None:
@@ -179,8 +210,8 @@ class Experiment:
     """Class for running prediction experiments."""
 
     features: pd.DataFrame
-    target_df: pd.Series
-    label: pd.Series
+    pred_label: pd.Series
+    plotting_target: pd.Series
     ch_names: list[str]
     sfreq: int
     decoder: Optional[Decoder] = None
@@ -207,7 +238,7 @@ class Experiment:
     groups: np.ndarray = field(init=False)
     events: np.ndarray = field(init=False)
     events_used: np.ndarray = field(init=False)
-    events_discard: np.ndarray = field(init=False)
+    events_discarded: np.ndarray = field(init=False)
     results: _Results = field(init=False)
 
     def __post_init__(self) -> None:
@@ -219,11 +250,13 @@ class Experiment:
             self.ch_names, self.use_channels, self.side
         )
 
+        save_importances = False if not self.feature_importance else True
         self.results = _Results(
-            target_name=self.target_df.name,
-            label_name=self.label.name,
+            target_name=self.plotting_target.name,
+            label_name=self.pred_label.name,
             ch_names=self.ch_names,
             use_channels=self.use_channels,
+            save_importances=save_importances,
         )
 
         if self.decoder is None:
@@ -234,7 +267,7 @@ class Experiment:
             )
 
         # Calculate events from label
-        self.events = _events_from_label(self.label.to_numpy(), self.verbose)
+        self.events = _events_from_label(self.pred_label.to_numpy())
 
         # Check for plausability of events
         if not (len(self.events) / 2).is_integer():
@@ -248,7 +281,7 @@ class Experiment:
             self.data_epochs,
             self.labels,
             self.events_used,
-            self.events_discard,
+            self.events_discarded,
             self.groups,
         ) = _get_feat_array(
             self.features.values,
@@ -261,6 +294,10 @@ class Experiment:
             artifacts=self.artifacts,
             bad_epochs=self.bad_epochs,
         )
+
+        print(f"Number of events detected:  {len(self.events) // 2}")
+        print(f"Number of events used:      {len(self.events_used)}")
+        print(f"Number of events discarded: {len(self.events_discarded)}")
 
         # Initialize DataFrame from array
         self.feature_epochs = pd.DataFrame(
@@ -315,7 +352,7 @@ class Experiment:
         )
 
         # Perform classification for each selected model
-        for ch_pick, _ in zip(ch_picks, ch_types):
+        for ch_pick, _ in zip(ch_picks, ch_types, strict=True):
             cols = self._get_column_picks(self.feature_epochs, ch_pick)
             data_train = self.feature_epochs[cols]
             self.decoder.fit(
@@ -331,8 +368,8 @@ class Experiment:
     def _update_results_labels(self, events_used: np.ndarray) -> None:
         """Update results with prediction labels."""
         for data, label_name in (
-            (self.label.to_numpy(), "Label"),
-            (self.target_df.to_numpy(), "Target"),
+            (self.pred_label.to_numpy(), "Label"),
+            (self.plotting_target.to_numpy(), "Target"),
         ):
             epoch_data = _get_prediction_epochs(
                 data=data,
@@ -376,7 +413,7 @@ class Experiment:
         )
 
         # Perform classification for each selected model
-        for ch_pick, ch_type in zip(ch_picks, ch_types):
+        for ch_pick, ch_type in zip(ch_picks, ch_types, strict=True):
             self._run_channel_pick(
                 ch_pick,
                 ch_type,
@@ -408,20 +445,26 @@ class Experiment:
 
         score = self.decoder.get_score(data_test, labels_test)
 
-        feature_importances = _get_importances(
-            feature_importance=self.feature_importance,
-            decoder=self.decoder,
-            data=data_test,
-            label=labels_test,
-            scoring=self.scoring,
-        )
+        if self.feature_importance is not None:
+            feature_importances = _get_importances(
+                feature_importance=self.feature_importance,
+                decoder=self.decoder,
+                data=data_test,
+                label=labels_test,
+                scoring=self.scoring,
+            )
+            self.results.update_feature_importances(
+                fold=self.fold,
+                ch_pick=ch_pick,
+                feature_names=cols,
+                feature_importances=feature_importances,
+            )
 
         self._update_results(
             ch_pick=ch_pick,
             ch_type=ch_type,
             events_used=evs_test,
             score=score,
-            feature_importances=feature_importances,
             cols=cols,
         )
 
@@ -446,7 +489,6 @@ class Experiment:
         ch_type: str,
         events_used: np.ndarray,
         score: Union[float, int],
-        feature_importances: list[Union[float, int]],
         cols: list[str],
     ) -> None:
         """Update results."""
@@ -454,8 +496,6 @@ class Experiment:
             fold=self.fold,
             ch_pick=ch_pick,
             score=score,
-            feature_importances=feature_importances,
-            feature_names=cols,
             events_used=events_used,
         )
 
@@ -492,7 +532,7 @@ class Experiment:
             ch_names = ["ECOG", "LFP"]
         else:
             ch_names = self.ch_names
-        ch_types = ["ECOG" if "ECOG" in ch else "LFP" for ch in self.ch_names]
+        ch_types = ["ECOG" if "ECOG" in ch else "LFP" for ch in ch_names]
         return ch_names, ch_types
 
     def _inner_loop(
@@ -549,12 +589,12 @@ def _get_importances(
     data: pd.DataFrame,
     label: np.ndarray,
     scoring: str,
-) -> list:
+) -> Sequence:
     """Calculate feature importances."""
     if not feature_importance:
         return []
     if feature_importance is True:
-        return decoder.model.coef_
+        return np.squeeze(decoder.model.coef_)
     if isinstance(feature_importance, int):
         imp_scores = permutation_importance(
             decoder.model,
@@ -699,9 +739,7 @@ def _predict_epochs(
     return predictions
 
 
-def _events_from_label(
-    label_data: np.ndarray, verbose: bool = False
-) -> np.ndarray:
+def _events_from_label(label_data: np.ndarray) -> np.ndarray:
     """Create array of events from given label data."""
     label_diff = np.zeros_like(label_data, dtype=int)
     label_diff[1:] = np.diff(label_data)
@@ -710,8 +748,6 @@ def _events_from_label(
     if label_data[-1] != 0:
         label_diff[-1] = -1
     events = np.nonzero(label_diff)[0]
-    if verbose:
-        print(f"Number of events detected: {len(events) / 2}")
     return events
 
 

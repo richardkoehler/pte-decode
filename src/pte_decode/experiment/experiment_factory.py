@@ -5,6 +5,7 @@ from typing import Optional, Sequence, Union
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
+from sklearn.model_selection import BaseCrossValidator
 
 import pte_decode
 
@@ -45,19 +46,19 @@ def _run_single_experiment(
     feature_root: Union[Path, str],
     feature_file: Union[Path, str],
     classifier: str,
-    label_channels,
-    target_begin,
-    target_end,
-    optimize,
-    balancing,
-    out_root,
-    use_channels,
-    use_features,
-    cross_validation,
+    label_channels: Sequence[str],
+    target_begin: Union[str, int, float],
+    target_end: Union[str, int, float],
+    optimize: bool,
+    balancing: Optional[str],
+    out_root: Union[Path, str],
+    use_channels: str,
+    feature_keywords: Sequence,
+    cross_validation: BaseCrossValidator,
+    plot_target_channels: list[str],
     scoring: str = "balanced_accuracy",
-    plot_target_channels: Optional[list[str]] = None,
     artifact_channels=None,
-    bad_events_path=None,
+    bad_epochs_path: Optional[Union[Path, str]] = None,
     pred_mode: str = "classify",
     pred_begin: Union[int, float] = -3.0,
     pred_end: Union[int, float] = 2.0,
@@ -75,8 +76,7 @@ def _run_single_experiment(
         nm_analysis,
     )  # pylint: disable=import-outside-toplevel
 
-    if verbose:
-        print("Using file: ", feature_file)
+    print("Using file: ", feature_file)
 
     # Read features using py_neuromodulation
     nm_reader = nm_analysis.Feature_Reader(
@@ -97,16 +97,18 @@ def _run_single_experiment(
         return None
 
     # Handle bad events file
-    bad_events = pte.filetools.get_bad_events(bad_events_path, feature_file)
+    bad_epochs_df = pte.filetools.get_bad_epochs(
+        bad_epochs_dir=bad_epochs_path, filename=feature_file
+    )
+    bad_epochs = bad_epochs_df.event_id.to_numpy() * 2
 
     # Pick target for plotting predictions
     target_series = _get_column_picks(
         column_picks=plot_target_channels,
         features=features,
     )
-    print("Target channels found:", target_series.name)
 
-    features_df = get_feature_df(features, use_features, use_times)
+    features_df = get_feature_df(features, feature_keywords, use_times)
 
     # Pick artifact channel
     if artifact_channels:
@@ -145,7 +147,17 @@ def _run_single_experiment(
         optimize=optimize,
     )
 
-    kwargs = dict(
+    # Initialize Experiment instance
+    experiment = pte_decode.Experiment(
+        features=features_df,
+        plotting_target=target_series,
+        pred_label=label,
+        ch_names=sidecar["ch_names"],
+        decoder=decoder,
+        side=side,
+        artifacts=artifacts,
+        bad_epochs=bad_epochs,
+        sfreq=settings["sampling_rate_features"],
         scoring=scoring,
         feature_importance=feature_importance,
         target_begin=target_begin,
@@ -158,19 +170,6 @@ def _run_single_experiment(
         pred_end=pred_end,
         cv_outer=cross_validation,
         verbose=verbose,
-    )
-    # Initialize Experiment instance
-    experiment = pte_decode.Experiment(
-        features=features_df,
-        target_df=target_series,
-        label=label,
-        ch_names=sidecar["ch_names"],
-        decoder=decoder,
-        side=side,
-        artifacts=artifacts,
-        bad_epochs=bad_events,
-        sfreq=settings["sampling_rate_features"],
-        **kwargs,
     )
     experiment.run()
     experiment.save_results(path=out_path)
@@ -211,20 +210,20 @@ def _generate_outpath(
     target_str = "_".join(("decode", str(target_begin), str(target_end)))
     clf_str = "_".join(("model", classifier))
     ch_str = "_".join(("chs", use_channels))
-    opt_str = "opt_yes" if optimize else "opt_no"
+    opt_str = "yes_opt" if optimize else "no_opt"
     feat_str = "_".join(("feats", str(use_times * 100), "ms"))
     out_name = "_".join((target_str, clf_str, ch_str, opt_str, feat_str))
     return Path(root, out_name, feature_file, feature_file)
 
 
 def get_feature_df(
-    data: pd.DataFrame, use_features: Sequence, use_times: int = 1
+    data: pd.DataFrame, feature_keywords: Sequence, use_times: int = 1
 ) -> pd.DataFrame:
     """Extract features to use from given DataFrame."""
     column_picks = [
         col
         for col in data.columns
-        if any(pick in col for pick in use_features)
+        if any(pick in col for pick in feature_keywords)
     ]
     used_features = data[column_picks]
 
@@ -253,15 +252,14 @@ def get_feature_df(
 
 
 def _get_column_picks(
-    column_picks: Optional[Sequence[str]],
+    column_picks: Sequence[str],
     features: pd.DataFrame,
 ) -> pd.Series:
     """Return first found column pick from features DataFrame."""
-    if column_picks:
-        for pick in column_picks:
-            for col in features.columns:
-                if pick.lower() in col.lower():
-                    return pd.Series(data=features[col], name=col)
+    for pick in column_picks:
+        for col in features.columns:
+            if pick.lower() in col.lower():
+                return pd.Series(data=features[col], name=col)
     raise ValueError(
         f"No valid column found. `column_picks` given: {column_picks}."
     )
