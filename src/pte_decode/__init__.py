@@ -9,6 +9,7 @@ from .experiment.experiment_factory import run_experiment
 from .plotting.plot import (
     boxplot_results,
     lineplot_prediction,
+    lineplot_prediction_single,
     violinplot_results,
 )
 from .results.load import (

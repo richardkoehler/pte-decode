@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 import pte
+import pte_stats
 
 
 def load_results_singlechannel(
@@ -25,7 +26,7 @@ def load_results_singlechannel(
         subject = mne_bids.get_entities_from_fname(file, on_error="ignore")[
             "subject"
         ]
-        data: pd.DataFrame = pd.read_csv( # type: ignore
+        data: pd.DataFrame = pd.read_csv(  # type: ignore
             file,
             index_col="channel_name",
             header=0,
@@ -33,21 +34,20 @@ def load_results_singlechannel(
         )
         for ch_name in data.index.unique():
             score = (
-                data.loc[ch_name].mean(
-                    numeric_only=True
-                    ).values[0]  # type: ignore
+                data.loc[ch_name]
+                .mean(numeric_only=True)
+                .values[0]  # type: ignore
             )
             results.append([subject, ch_name, score])
     columns = [
         "Subject",
-        "Channel Name",
+        "Channel",
         scoring_key,
     ]
+    columns = _normalize_columns(columns)
     data_out = pd.DataFrame(results, columns=columns)
     if average_runs:
-        data_out = data_out.set_index(
-            keys=["Subject", "Channel Name"]
-        ).sort_index()
+        data_out = data_out.set_index(["Subject", "Channel"]).sort_index()
         results_average = []
         for ind in data_out.index.unique():
             result_av = data_out.loc[ind].mean(numeric_only=True).values[0]
@@ -59,8 +59,9 @@ def load_results_singlechannel(
 def load_results(
     files_or_dir: Union[str, list, Path],
     scoring_key: str = "balanced_accuracy",
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Load prediciton results from *results.csv"""
+    average_results: bool = True,
+) -> pd.DataFrame:
+    """Load prediction results from *results.csv"""
     # Create Dataframes from Files
     files_or_dir = _handle_files_or_dir(
         files_or_dir=files_or_dir, extensions="results.csv"
@@ -100,36 +101,41 @@ def load_results(
             ]
         )
     columns = [
-        "filename",
-        "subject",
-        "medication",
-        "stimulation",
-        "channels",
+        "Filename",
+        "Subject",
+        "Medication",
+        "Stimulation",
+        "Channels",
         scoring_key,
     ]
+    columns = _normalize_columns(columns)
     df_raw = pd.DataFrame(results, columns=columns)
 
-    # Average raw results
+    if not average_results:
+        return df_raw
+
+    scoring_key = _normalize_columns([scoring_key])[0]
     results_average = []
-    for ch_name in df_raw["channels"].unique():
-        df_ch = df_raw.loc[df_raw["channels"] == ch_name]
-        for subject in df_ch["subject"].unique():
-            df_subj = df_ch.loc[df_ch["subject"] == subject]
+    for ch_name in df_raw["Channels"].unique():
+        df_ch = df_raw.loc[df_raw["Channels"] == ch_name]
+        for subject in df_ch["Subject"].unique():
+            df_subj = df_ch.loc[df_ch["Subject"] == subject]
             series_single = pd.Series(
                 df_subj.iloc[0].values, index=df_subj.columns
-            ).drop("filename")
+            ).drop("Filename")
             series_single[scoring_key] = df_subj[scoring_key].mean()
             results_average.append(series_single)
     df_average = pd.DataFrame(results_average)
+    return df_average
 
-    # Rename columns
-    df_average = df_average.rename(
-        columns={
-            col: " ".join([substr.capitalize() for substr in col.split("_")])
-            for col in df_average.columns
-        }
-    )
-    return df_average, df_raw
+
+def _normalize_columns(columns: list[str]) -> list[str]:
+    """Normalize column names."""
+    new_columns = [
+        "".join([substr.capitalize() for substr in col.split("_")])
+        for col in columns
+    ]
+    return new_columns
 
 
 def _handle_files_or_dir(
@@ -166,7 +172,7 @@ def _load_labels_single(
     label_arr = np.stack(data["Target"], axis=0)
 
     if baseline is not None:
-        label_arr = _baseline_correct(
+        label_arr = pte_stats.baseline_correct(
             label_arr, baseline_mode, base_start, base_end
         )
 
@@ -212,7 +218,9 @@ def load_predictions(
         files_or_dir=files_or_dir, extensions="predictions_timelocked.json"
     )
 
-    base_start, base_end = _handle_baseline(baseline=baseline, sfreq=sfreq)
+    base_start, base_end = pte_stats.handle_baseline(
+        baseline=baseline, sfreq=sfreq
+    )
 
     df_list = []
     for fpath in files_or_dir:
@@ -285,7 +293,7 @@ def _load_predictions_single(
         if any(keyw in ch_name for keyw in ["ECOG", "LFP"]):
             pred_arr = np.stack(preds[ch_name], axis=0)
             if baseline:
-                pred_arr = _baseline_correct(
+                pred_arr = pte_stats.baseline_correct(
                     pred_arr, baseline_mode, base_start, base_end
                 )
             data_list.append(
@@ -312,52 +320,3 @@ def _load_predictions_single(
         ],
     )
     return data
-
-
-def _handle_baseline(
-    baseline: Optional[
-        tuple[Optional[Union[int, float]], Optional[Union[int, float]]]
-    ],
-    sfreq: Optional[Union[int, float]],
-) -> tuple[Optional[int], Optional[int]]:
-    """Return baseline start and end indices."""
-    if not baseline:
-        return None, None
-    if any(baseline) and not sfreq:
-        raise ValueError(
-            "If `baseline` is any value other than `None`, or `(None, None)`,"
-            f" `sfreq` must be provided. Got: {baseline=}"
-        )
-    if not sfreq:
-        sfreq = 0.0
-    if baseline[0] is None:
-        base_start = 0
-    else:
-        base_start = int(baseline[0] * sfreq)
-    if baseline[1] is None:
-        base_end = None
-    else:
-        base_end = int(baseline[1] * sfreq)
-    return base_start, base_end
-
-
-def _baseline_correct(
-    data: np.ndarray,
-    baseline_mode: str,
-    base_start: Optional[int],
-    base_end: Optional[int],
-) -> np.ndarray:
-    """Baseline correct data."""
-    data = data.T
-    if baseline_mode == "zscore":
-        data = (data - np.mean(data[base_start:base_end], axis=0)) / (
-            np.std(data[base_start:base_end], axis=0)
-        )
-        return data.T
-    if baseline_mode == "std":
-        data = data / np.std(data[base_start:base_end], axis=0)
-        return data.T
-    raise ValueError(
-        "`baseline_mode` must be one of either `std` or `zscore`."
-        f" Got: {baseline_mode}."
-    )

@@ -41,7 +41,7 @@ def violinplot_results(
     if figsize == "auto":
         hue_factor = 1 if not hue else len(hue_order)
         figsize = (1.1 * len(order) * hue_factor, 4)
-        
+
     fig, ax = plt.subplots(nrows=1, ncols=1, figsize=figsize)
 
     ax = sns.violinplot(
@@ -228,7 +228,6 @@ def boxplot_results(
             stat_test=stat_test,
             alpha=alpha,
         )
-
     plt.tight_layout()
     plt.savefig(outpath, bbox_inches="tight", dpi=450)
     plt.show(block=True)
@@ -309,13 +308,12 @@ def _add_stats(
 
 def lineplot_prediction(
     x: np.ndarray,
-    y: np.ndarray,
     subpl_titles: Iterable,
     sfreq: Union[int, float],
     x_lims: tuple,
+    y: Optional[np.ndarray] = None,
     outpath: Optional[Union[Path, str]] = None,
     title: Optional[str] = None,
-    subtitle: Optional[str] = None,
     label: Optional[str] = "Distance from Hyperplane",
     y_label: str = None,
     threshold: Union[
@@ -327,35 +325,51 @@ def lineplot_prediction(
     two_tailed: bool = False,
     ylims=None,
     compare_xy: bool = False,
+    show_plot: bool = True,
 ) -> figure.Figure:
     """Plot averaged time-locked predictions including statistical tests."""
     viridis = cm.get_cmap("viridis", 8)
     colors = viridis(4), viridis(2)
 
-    nrows = 3 if compare_xy else 2
+    if y is not None:
+        if compare_xy:
+            nrows = 3
+        else:
+            nrows = 2
+    else:
+        nrows = 1
 
     fig, axs = plt.subplots(
-        ncols=1, nrows=nrows, figsize=(6, 2.0 * nrows), sharex=False
+        ncols=1, nrows=nrows, figsize=(6, 2.0 * nrows), sharey=True
     )
+    if y is None:
+        # for compatibility
+        axs = [axs]
 
     n_samples = x.shape[0]
 
     for i, data in enumerate((x, y)):
-        _single_lineplot(
-            data=data,
-            ax=axs[i],
-            threshold=threshold,
-            sfreq=sfreq,
-            x_lims=x_lims,
-            color=colors[i],
-            subpl_title=subpl_titles[i],
-            label=label,
-            p_lim=p_lim,
-            n_perm=n_perm,
-            correction_method=correction_method,
-        )
+        if data is not None:
+            lineplot_prediction_single(
+                data=data,
+                ax=axs[i],
+                threshold=threshold,
+                sfreq=sfreq,
+                x_lims=x_lims,
+                color=colors[i],
+                subpl_title=subpl_titles[i],
+                label=label,
+                p_lim=p_lim,
+                n_perm=n_perm,
+                correction_method=correction_method,
+                two_tailed=two_tailed,
+            )
 
     if compare_xy:
+        if y is None:
+            raise ValueError(
+                "if `compare_xy` is `True`, `y` must not be" " `None`."
+            )
         for i, data in enumerate([x, y]):
             label_ = (
                 " - ".join((subpl_titles[i], label))
@@ -404,21 +418,12 @@ def lineplot_prediction(
         ax.set_ylabel(y_label)
         ax.set_xlabel("Time (s)")
 
-    if subtitle:
-        fig.text(
-            x=0.5,
-            y=0.94,
-            s=subtitle,
-            fontsize="medium",
-            ha="center",
-            style="italic",
-            transform=fig.transFigure,
-        )
     fig.suptitle(title, fontsize="large", y=1.01)
     fig.tight_layout()
     if outpath:
         fig.savefig(os.path.normpath(outpath), bbox_inches="tight", dpi=300)
-    plt.show(block=True)
+    if show_plot:
+        plt.show(block=True)
     return fig
 
 
@@ -428,7 +433,7 @@ def _permutation_wrapper(x, y, n_perm) -> tuple:
         x = x.to_numpy()
     if isinstance(y, pd.Series):
         y = y.to_numpy()
-    return pte_stats.permutation_twosample(x=x, y=y, n_perm=n_perm)
+    return pte_stats.permutation_twosample(data_a=x, data_b=y, n_perm=n_perm)
 
 
 def _pval_correction_lineplot(
@@ -484,7 +489,7 @@ def _pval_correction_lineplot(
                     )
 
 
-def _single_lineplot(
+def lineplot_prediction_single(
     data: np.ndarray,
     ax: axes.Axes,
     threshold: Union[Iterable, int, float],
@@ -496,6 +501,7 @@ def _single_lineplot(
     p_lim: float,
     n_perm: int,
     correction_method: str,
+    two_tailed: bool,
 ) -> None:
     """Plot prediction line for single model."""
     (
@@ -523,6 +529,7 @@ def _single_lineplot(
         color=color,
         label=None,
     )
+
     ax.plot(
         threshold_arr,
         color="r",
@@ -532,7 +539,7 @@ def _single_lineplot(
     )
 
     p_vals = pte_stats.timeseries_pvals(
-        x=data, y=threshold_value, n_perm=n_perm, two_tailed=False
+        x=data, y=threshold_value, n_perm=n_perm, two_tailed=two_tailed
     )
 
     _pval_correction_lineplot(
