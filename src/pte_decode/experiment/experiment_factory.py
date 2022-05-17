@@ -25,7 +25,7 @@ def run_experiment(
         feature_files = [feature_files]
     if len(feature_files) == 1 or n_jobs in (0, 1):
         return [
-            _run_single_experiment(
+            pynm_experiment(
                 feature_root=feature_root,
                 feature_file=feature_file,
                 **kwargs,
@@ -34,7 +34,7 @@ def run_experiment(
         ]
     return [
         Parallel(n_jobs=n_jobs)(
-            delayed(_run_single_experiment)(
+            delayed(pynm_experiment)(
                 feature_root=feature_root, feature_file=feature_file, **kwargs
             )
             for feature_file in feature_files
@@ -42,7 +42,7 @@ def run_experiment(
     ]  # type: ignore
 
 
-def _run_single_experiment(
+def pynm_experiment(
     feature_root: Union[Path, str],
     feature_file: Union[Path, str],
     classifier: str,
@@ -57,7 +57,6 @@ def _run_single_experiment(
     cross_validation: BaseCrossValidator,
     plot_target_channels: list[str],
     scoring: str = "balanced_accuracy",
-    artifact_channels=None,
     bad_epochs_path: Optional[Union[Path, str]] = None,
     pred_mode: str = "classify",
     pred_begin: Union[int, float] = -3.0,
@@ -100,7 +99,7 @@ def _run_single_experiment(
     bad_epochs_df = pte.filetools.get_bad_epochs(
         bad_epochs_dir=bad_epochs_path, filename=feature_file
     )
-    bad_epochs = bad_epochs_df.event_id.to_numpy() * 2
+    bad_epochs = bad_epochs_df.event_id.to_numpy()
 
     # Pick target for plotting predictions
     target_series = _get_column_picks(
@@ -109,15 +108,6 @@ def _run_single_experiment(
     )
 
     features_df = get_feature_df(features, feature_keywords, use_times)
-
-    # Pick artifact channel
-    if artifact_channels:
-        artifacts = _get_column_picks(
-            column_picks=artifact_channels,
-            features=features,
-        ).to_numpy()
-    else:
-        artifacts = None
 
     # Generate output file name
     out_path = _generate_outpath(
@@ -155,9 +145,8 @@ def _run_single_experiment(
         ch_names=sidecar["ch_names"],
         decoder=decoder,
         side=side,
-        artifacts=artifacts,
         bad_epochs=bad_epochs,
-        sfreq=settings["sampling_rate_features"],
+        sfreq=settings["sampling_rate_features_hz"],
         scoring=scoring,
         feature_importance=feature_importance,
         target_begin=target_begin,
@@ -207,11 +196,11 @@ def _generate_outpath(
         target_begin = "trial_begin"
     if target_end == 0.0:
         target_end = "trial_begin"
-    target_str = "_".join(("decode", str(target_begin), str(target_end)))
-    clf_str = "_".join(("model", classifier))
-    ch_str = "_".join(("chs", use_channels))
-    opt_str = "yes_opt" if optimize else "no_opt"
-    feat_str = "_".join(("feats", str(use_times * 100), "ms"))
+    target_str = f"{target_begin}_{target_end}"
+    clf_str = str(classifier)
+    ch_str = f"chs_{use_channels}"
+    opt_str = "opt_yes" if optimize else "opt_no"
+    feat_str = f"feat_{use_times * 100}ms"
     out_name = "_".join((target_str, clf_str, ch_str, opt_str, feat_str))
     return Path(root, out_name, feature_file, feature_file)
 
