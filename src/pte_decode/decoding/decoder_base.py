@@ -33,7 +33,14 @@ class Decoder(ABC):
     def fit(self, data: pd.DataFrame, labels: np.ndarray, groups) -> None:
         """Fit model to given training data and training labels."""
 
-    def get_score(self, data_test: np.ndarray, label_test: np.ndarray):
+    def predict(self, data_test: np.ndarray) -> np.ndarray:
+        return self.model.predict(data_test)
+
+    def get_score(
+        self,
+        data_test: np.ndarray | pd.DataFrame,
+        label_test: np.ndarray | pd.Series,
+    ):
         """Calculate score."""
         return self.scoring(self.model, data_test, label_test)
 
