@@ -9,7 +9,7 @@ import pandas as pd
 import seaborn as sns
 from matplotlib import axes, cm, collections, figure, patheffects
 from matplotlib import pyplot as plt
-from scipy import stats
+import scipy.stats
 from statannotations import Annotator
 from statannotations.stats import StatTest
 
@@ -307,32 +307,34 @@ def _add_stats(
 
 
 def lineplot_prediction(
-    x: np.ndarray,
-    subpl_titles: Iterable,
+    x_1: np.ndarray,
+    subplot_titles: Sequence,
     sfreq: Union[int, float],
     x_lims: tuple,
-    y: Optional[np.ndarray] = None,
+    x_2: Optional[np.ndarray] = None,
     outpath: Optional[Union[Path, str]] = None,
     title: Optional[str] = None,
-    label: Optional[str] = "Distance from Hyperplane",
-    y_label: str = None,
+    label: Optional[str] = None,
+    x_label: str = "Time (s)",
+    y_label: Optional[str] = None,
     threshold: Union[
         int, float, tuple[Union[int, float], Union[int, float]]
     ] = (0.0, 1.0),
-    p_lim: float = 0.05,
+    alpha: float = 0.05,
     n_perm: int = 1000,
     correction_method: str = "cluster",
     two_tailed: bool = False,
-    ylims=None,
-    compare_xy: bool = False,
+    y_lims: Optional[Sequence] = None,
+    compare_x1x2: bool = False,
+    paired_x1x2: bool = False,
     show_plot: bool = True,
 ) -> figure.Figure:
     """Plot averaged time-locked predictions including statistical tests."""
     viridis = cm.get_cmap("viridis", 8)
     colors = viridis(4), viridis(2)
 
-    if y is not None:
-        if compare_xy:
+    if x_2 is not None:
+        if compare_x1x2:
             nrows = 3
         else:
             nrows = 2
@@ -342,13 +344,13 @@ def lineplot_prediction(
     fig, axs = plt.subplots(
         ncols=1, nrows=nrows, figsize=(6, 2.0 * nrows), sharey=True
     )
-    if y is None:
+    if x_2 is None:
         # for compatibility
         axs = [axs]
 
-    n_samples = x.shape[0]
+    n_samples = x_1.shape[0]
 
-    for i, data in enumerate((x, y)):
+    for i, data in enumerate((x_1, x_2)):
         if data is not None:
             lineplot_prediction_single(
                 data=data,
@@ -357,66 +359,65 @@ def lineplot_prediction(
                 sfreq=sfreq,
                 x_lims=x_lims,
                 color=colors[i],
-                subpl_title=subpl_titles[i],
+                subplot_title=subplot_titles[i],
                 label=label,
-                p_lim=p_lim,
+                alpha=alpha,
                 n_perm=n_perm,
                 correction_method=correction_method,
                 two_tailed=two_tailed,
             )
 
-    if compare_xy:
-        if y is None:
+    if compare_x1x2:
+        if x_2 is None:
             raise ValueError(
-                "if `compare_xy` is `True`, `y` must not be" " `None`."
+                "If `compare_x1x2` is `True`, data for `x2` must be provided."
             )
-        for i, data in enumerate([x, y]):
-            label_ = (
-                " - ".join((subpl_titles[i], label))
+        for i, data in enumerate([x_1, x_2]):
+            single_label = (
+                " - ".join((subplot_titles[i], label))
                 if label
-                else subpl_titles[i]
+                else subplot_titles[i]
             )
             axs[2].plot(
                 data.mean(axis=1),
                 color=colors[i],
-                label=label_,
+                label=single_label,
             )
             axs[2].fill_between(
                 np.arange(data.shape[0]),
-                data.mean(axis=1) - stats.sem(data, axis=1),
-                data.mean(axis=1) + stats.sem(data, axis=1),
+                data.mean(axis=1) - scipy.stats.sem(data, axis=1),
+                data.mean(axis=1) + scipy.stats.sem(data, axis=1),
                 alpha=0.5,
                 color=colors[i],
             )
         axs[2].set_title(
-            f"{subpl_titles[0]} vs. {subpl_titles[1]}", fontsize="medium"
+            f"{subplot_titles[0]} vs. {subplot_titles[1]}", fontsize="medium"
         )
         axs[2].set_xlabel("Time [s]")
 
-        p_vals = pte_stats.timeseries_pvals(
-            x=x, y=y, n_perm=n_perm, two_tailed=two_tailed
-        )
-
         _pval_correction_lineplot(
             ax=axs[2],
-            x=x,
-            y=y,
+            x=x_1,
+            y=x_2,
             x_lims=x_lims,
-            p_vals=p_vals,
-            alpha=p_lim,
+            alpha=alpha,
             n_perm=n_perm,
             correction_method=correction_method,
+            two_tailed=two_tailed,
+            min_cluster_size=2,
+            onesample_xy=paired_x1x2,
         )
-
+    xticks = np.arange(0, n_samples, sfreq)
+    xticklabels = np.linspace(x_lims[0], x_lims[1], len(xticks)).round(1)
     for ax in axs:
         ax.legend(loc="upper left", fontsize="small")
-        if ylims:
-            ax.set_ylim(ylims[0], ylims[1])
-        xticks = np.arange(0, n_samples, sfreq)
+        if y_lims:
+            ax.set_ylim(y_lims[0], y_lims[1])
+
         ax.set_xticks(xticks)
-        ax.set_xticklabels(np.linspace(x_lims[0], x_lims[1], len(xticks)))
+        ax.set_xticklabels(xticklabels)
         ax.set_ylabel(y_label)
-        ax.set_xlabel("Time (s)")
+        ax.set_xlabel(x_label)
 
     fig.suptitle(title, fontsize="large", y=1.01)
     fig.tight_layout()
@@ -439,44 +440,85 @@ def _permutation_wrapper(x, y, n_perm) -> tuple:
 def _pval_correction_lineplot(
     ax: axes.Axes,
     x: np.ndarray,
-    y: np.ndarray,
+    y: Union[int, float, np.ndarray],
     x_lims: tuple,
-    p_vals: Iterable,
     alpha: float,
     correction_method: str,
-    n_perm: Optional[int] = None,
+    n_perm: int,
+    two_tailed: bool,
+    onesample_xy: bool,
+    min_cluster_size: int = 2,
 ) -> None:
     """Perform p-value correction for singe lineplot."""
     viridis = cm.get_cmap("viridis", 8)
-    if y.ndim == 1:
-        y = np.expand_dims(y, axis=1)
 
-    clusters, cluster_count = pte_stats.clusters_from_pvals(
-        p_vals=p_vals,
-        alpha=alpha,
-        correction_method=correction_method,
-        n_perm=n_perm,
-    )
+    if onesample_xy:
+        data_a = x - y
+        data_b = 0.0
+    else:
+        data_a = x
+        data_b = y
+
+    if correction_method == "cluster":
+        _, clusters_ind = pte_stats.cluster_analysis_1d(
+            data_a=data_a.T,
+            data_b=data_b,
+            alpha=alpha,
+            n_perm=n_perm,
+            only_max_cluster=False,
+            two_tailed=two_tailed,
+            min_cluster_size=min_cluster_size,
+        )
+        if len(clusters_ind) == 0:
+            return
+        cluster_count = len(clusters_ind)
+        clusters = np.zeros(data_a.shape[0], dtype=np.int32)
+        for ind in clusters_ind:
+            clusters[ind] = 1
+    elif correction_method in ["cluster_pvals", "fdr"]:
+        p_vals = pte_stats.timeseries_pvals(
+            x=data_a, y=data_b, n_perm=n_perm, two_tailed=two_tailed
+        )
+        # plt.plot(p_vals)
+        # plt.show(block=True)
+        clusters, cluster_count = pte_stats.clusters_from_pvals(
+            p_vals=p_vals,
+            alpha=alpha,
+            correction_method=correction_method,
+            n_perm=n_perm,
+            min_cluster_size=min_cluster_size,
+        )
+    else:
+        raise ValueError(
+            f"Unknown cluster correction method: {correction_method}."
+        )
 
     if cluster_count > 0:
-        label = f"p-value <= {alpha}"
-        x_labels = np.linspace(x_lims[0], x_lims[1], len(p_vals)).round(2)
+        if isinstance(y, (int, float)) and not onesample_xy:
+            y_arr = np.ones((x.shape[0], 1))
+            y_arr[:, 0] = y
+        else:
+            y_arr = y
+        if onesample_xy:
+            x_arr = x
+        else:
+            x_arr = data_a
+        label = f"p-value ≤ {alpha}"
+        x_labels = np.linspace(x_lims[0], x_lims[1], x_arr.shape[0]).round(2)
         for cluster_idx in range(1, cluster_count + 1):
             index = np.where(clusters == cluster_idx)[0]
-            # time_point = x_labels[index]
             lims = np.arange(index[0], index[-1] + 1)
-            y_lims = y.mean(axis=1)[lims]
+            y_lims = y_arr.mean(axis=1)[lims]
             if y_lims.size > 0:
                 ax.fill_between(
                     x=lims,
-                    y1=x.mean(axis=1)[lims],
+                    y1=x_arr.mean(axis=1)[lims],
                     y2=y_lims,
                     alpha=0.5,
                     color=viridis(7),
                     label=label,
                 )
                 label = None  # Avoid printing label multiple times
-                # label_lims = lims[where]
                 for i in [0, -1]:
                     ax.annotate(
                         str(x_labels[lims[i]]) + "s",
@@ -497,8 +539,8 @@ def lineplot_prediction_single(
     x_lims: tuple,
     color: tuple,
     label: Optional[str],
-    subpl_title: str,
-    p_lim: float,
+    subplot_title: str,
+    alpha: float,
     n_perm: int,
     correction_method: str,
     two_tailed: bool,
@@ -516,15 +558,15 @@ def lineplot_prediction_single(
     #     [np.column_stack([x, dat_]) for dat_ in data.T],
     #     color=color,
     #     linewidth=1,
-    #     alpha=0.5,
+    #     alpha=0.3,
     # )
     # ax.add_collection(lines)
 
     ax.plot(data.mean(axis=1), color=color, label=label)
     ax.fill_between(
         np.arange(data.shape[0]),
-        data.mean(axis=1) - stats.sem(data, axis=1),
-        data.mean(axis=1) + stats.sem(data, axis=1),
+        data.mean(axis=1) - scipy.stats.sem(data, axis=1),
+        data.mean(axis=1) + scipy.stats.sem(data, axis=1),
         alpha=0.5,
         color=color,
         label=None,
@@ -538,22 +580,20 @@ def lineplot_prediction_single(
         linestyle="dashed",
     )
 
-    p_vals = pte_stats.timeseries_pvals(
-        x=data, y=threshold_value, n_perm=n_perm, two_tailed=two_tailed
-    )
-
     _pval_correction_lineplot(
         ax=ax,
         x=data,
-        y=threshold_arr,
+        y=threshold_value,
         x_lims=x_lims,
-        p_vals=p_vals,
-        alpha=p_lim,
+        alpha=alpha,
         n_perm=n_perm,
         correction_method=correction_method,
+        two_tailed=two_tailed,
+        min_cluster_size=2,
+        onesample_xy=False,
     )
 
-    ax.set_title(subpl_title, fontsize="medium")
+    ax.set_title(subplot_title, fontsize="medium")
 
 
 def _add_median_labels(ax: axes.Axes, add_borders: bool = False) -> None:
