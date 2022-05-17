@@ -74,17 +74,18 @@ def load_results(
         )
         accuracies = []
         for ch_name in data["channel_name"].unique():
+            channel = "LFP" if "LFP" in ch_name else "ECOG"
             accuracies.append(
                 [
-                    "LFP" if "LFP" in ch_name else "ECOG",
+                    channel,
                     data[data.channel_name == ch_name]
                     .mean(numeric_only=True)
                     .value,  # type: ignore
                 ]
             )
-        df_acc = pd.DataFrame(accuracies, columns=["Channels", scoring_key])
-        df_lfp = df_acc[df_acc["Channels"] == "LFP"]
-        df_ecog = df_acc[df_acc["Channels"] == "ECOG"]
+        df_acc = pd.DataFrame(accuracies, columns=["Channel", scoring_key])
+        df_lfp = df_acc[df_acc["Channel"] == "LFP"]
+        df_ecog = df_acc[df_acc["Channel"] == "ECOG"]
         subject = mne_bids.get_entities_from_fname(file, on_error="ignore")[
             "subject"
         ]
@@ -105,7 +106,7 @@ def load_results(
         "Subject",
         "Medication",
         "Stimulation",
-        "Channels",
+        "Channel",
         scoring_key,
     ]
     columns = _normalize_columns(columns)
@@ -114,25 +115,18 @@ def load_results(
     if not average_results:
         return df_raw
 
-    scoring_key = _normalize_columns([scoring_key])[0]
-    results_average = []
-    for ch_name in df_raw["Channels"].unique():
-        df_ch = df_raw.loc[df_raw["Channels"] == ch_name]
-        for subject in df_ch["Subject"].unique():
-            df_subj = df_ch.loc[df_ch["Subject"] == subject]
-            series_single = pd.Series(
-                df_subj.iloc[0].values, index=df_subj.columns
-            ).drop("Filename")
-            series_single[scoring_key] = df_subj[scoring_key].mean()
-            results_average.append(series_single)
-    df_average = pd.DataFrame(results_average)
+    df_average = (
+        df_raw.groupby(["Subject", "Medication", "Stimulation", "Channel"])
+        .mean()
+        .reset_index()
+    )
     return df_average
 
 
 def _normalize_columns(columns: list[str]) -> list[str]:
     """Normalize column names."""
     new_columns = [
-        "".join([substr.capitalize() for substr in col.split("_")])
+        " ".join([substr.capitalize() for substr in col.split("_")])
         for col in columns
     ]
     return new_columns
@@ -194,7 +188,7 @@ def _load_labels_single(
             "Task",
             "Run",
             "Acquisition",
-            "Channel Name",
+            "Channel",
             "Data",
         ],
     )
@@ -267,12 +261,12 @@ def _concatenate_runs(data: pd.DataFrame):
     data_list = []
     for subject in data["Subject"].unique():
         dat_sub = data[data["Subject"] == subject]
-        for ch_name in dat_sub["Channel Name"].unique():
+        for ch_name in dat_sub["Channel"].unique():
             dat_concat = np.vstack(
-                dat_sub["Data"][dat_sub["Channel Name"] == ch_name].to_numpy()
+                dat_sub["Data"][dat_sub["Channel"] == ch_name].to_numpy()
             )
             data_list.append([subject, ch_name, dat_concat])
-    return pd.DataFrame(data_list, columns=["Subject", "Channel Name", "Data"])
+    return pd.DataFrame(data_list, columns=["Subject", "Channel", "Data"])
 
 
 def _load_predictions_single(
@@ -315,7 +309,7 @@ def _load_predictions_single(
             "Task",
             "Run",
             "Acquisition",
-            "Channel Name",
+            "Channel",
             "Data",
         ],
     )
