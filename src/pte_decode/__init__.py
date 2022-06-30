@@ -2,10 +2,14 @@
 
 __version__ = "0.1.0"
 
-from .decoding.decoder_factory import get_decoder
 from .decoding.decoder_base import Decoder
-from .experiment.experiment_base import Experiment
-from .experiment.experiment_factory import run_experiment
+from .decoding.decoder_factory import get_decoder
+from .experiment.experiment_base import DecodingExperiment
+from .experiment.experiment_factory import run_pipeline_decoding
+from .features.feature_cleaning import FeatureCleaner
+from .features.feature_engineering import FeatureEngineer
+from .features.feature_epochs import FeatureEpochs
+from .features.feature_selection import FeatureSelector
 from .plotting.plot import (
     boxplot_results,
     lineplot_prediction,
@@ -14,7 +18,7 @@ from .plotting.plot import (
 )
 from .results.load import (
     load_predictions,
-    load_results,
+    load_scores,
     load_results_singlechannel,
 )
 from .results.timepoint import get_earliest_timepoint

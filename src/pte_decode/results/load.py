@@ -1,6 +1,7 @@
 """Module for loading results from decoding experiments."""
 import json
 from pathlib import Path
+import pickle
 from typing import Optional, Union
 
 import mne_bids
@@ -56,71 +57,35 @@ def load_results_singlechannel(
     return data_out
 
 
-def load_results(
-    files_or_dir: Union[str, list, Path],
+def load_scores(
+    files: str | Path | list,
     scoring_key: str = "balanced_accuracy",
-    average_results: bool = True,
+    average_runs: bool = True,
 ) -> pd.DataFrame:
-    """Load prediction results from *results.csv"""
-    # Create Dataframes from Files
-    files_or_dir = _handle_files_or_dir(
-        files_or_dir=files_or_dir, extensions="results.csv"
-    )
+    """Load prediction scores from *Scores.csv"""
+    if not isinstance(files, list):
+        files = [files]
     results = []
-    for file in files_or_dir:
-        data_raw = pd.read_csv(file, index_col=[0], header=[0])
-        data: pd.DataFrame = pd.melt(
-            data_raw, id_vars=["channel_name"], value_vars=[scoring_key]
-        )
-        accuracies = []
-        for ch_name in data["channel_name"].unique():
-            channel = "LFP" if "LFP" in ch_name else "ECOG"
-            accuracies.append(
-                [
-                    channel,
-                    data[data.channel_name == ch_name]
-                    .mean(numeric_only=True)
-                    .value,  # type: ignore
-                ]
-            )
-        df_acc = pd.DataFrame(accuracies, columns=["Channel", scoring_key])
-        df_lfp = df_acc[df_acc["Channel"] == "LFP"]
-        df_ecog = df_acc[df_acc["Channel"] == "ECOG"]
-        subject = mne_bids.get_entities_from_fname(file, on_error="ignore")[
-            "subject"
-        ]
-        values = [
-            file,
-            subject,
-            "OFF" if "MedOff" in file else "ON",
-            "OFF" if "StimOff" in file else "ON",
-        ]
-        results.extend(
-            [
-                values + ["LFP", df_lfp[scoring_key].max()],
-                values + ["ECOG", df_ecog[scoring_key].max()],
-            ]
-        )
+    for file in files:
+        sub, med, stim = pte.filetools.sub_med_stim_from_fname(file)
+        score = pd.read_csv(file, header=[0]).loc[:, scoring_key].mean()
+        print(score)
+        results.append((file, sub, med, stim, score))
     columns = [
         "Filename",
         "Subject",
         "Medication",
         "Stimulation",
-        "Channel",
         scoring_key,
     ]
-    columns = _normalize_columns(columns)
-    df_raw = pd.DataFrame(results, columns=columns)
-
-    if not average_results:
-        return df_raw
-
-    df_average = (
-        df_raw.groupby(["Subject", "Medication", "Stimulation", "Channel"])
-        .mean()
-        .reset_index()
-    )
-    return df_average
+    final = pd.DataFrame(results, columns=columns)
+    if average_runs:
+        final = (
+            final.groupby(["Subject", "Medication", "Stimulation"])
+            .mean()
+            .reset_index()
+        )
+    return final
 
 
 def _normalize_columns(columns: list[str]) -> list[str]:
@@ -158,7 +123,8 @@ def _load_labels_single(
     base_end: Optional[int],
 ) -> pd.DataFrame:
     """Load time-locked predictions from single file."""
-    entities = mne_bids.get_entities_from_fname(fpath, on_error="ignore")
+    sub, med, stim = pte.filetools.sub_med_stim_from_fname(fpath)
+
     with open(fpath, "r", encoding="utf-8") as file:
         data = json.load(file)
 
@@ -173,21 +139,17 @@ def _load_labels_single(
     labels = pd.DataFrame(
         data=[
             [
-                entities["subject"],
-                entities["session"],
-                entities["task"],
-                entities["run"],
-                entities["acquisition"],
+                sub,
+                med,
+                stim,
                 label_name,
                 label_arr,
             ]
         ],
         columns=[
             "Subject",
-            "Session",
-            "Task",
-            "Run",
-            "Acquisition",
+            "Medication",
+            "Stimulation",
             "Channel",
             "Data",
         ],
@@ -197,7 +159,6 @@ def _load_labels_single(
 
 def load_predictions(
     files_or_dir: Union[str, list, Path],
-    mode: str = "predictions",
     sfreq: Optional[Union[int, float]] = None,
     baseline: Optional[
         tuple[Optional[Union[int, float]], Optional[Union[int, float]]]
@@ -218,42 +179,30 @@ def load_predictions(
 
     df_list = []
     for fpath in files_or_dir:
-        if mode == "predictions":
-            df_single: pd.DataFrame = _load_predictions_single(
-                fpath=fpath,
-                baseline=baseline,
-                baseline_mode=baseline_mode,
-                base_start=base_start,
-                base_end=base_end,
-            )
-        elif mode == "targets":
-            df_single: pd.DataFrame = _load_labels_single(
-                fpath=fpath,
-                baseline=baseline,
-                baseline_mode=baseline_mode,
-                base_start=base_start,
-                base_end=base_end,
-            )
-        else:
-            raise ValueError(
-                "`mode` must be one of either `targets` or "
-                f"`predictions. Got: {mode}."
-            )
+        data_single = _load_predictions_single(
+            fpath=fpath,
+            baseline=baseline,
+            baseline_mode=baseline_mode,
+            base_start=base_start,
+            base_end=base_end,
+        )
         if average_predictions:
-            df_single["Data"] = (
-                df_single["Data"]
+            data_single["Predictions"] = (
+                data_single["Predictions"]
                 .apply(np.mean, axis=0)
                 .apply(np.expand_dims, axis=0)
             )
-        df_list.append(df_single)
-    df_all: pd.DataFrame = pd.concat(objs=df_list)
+        df_list.append(data_single)
+    data_all: pd.DataFrame = pd.concat(df_list)  # type: ignore
     if concatenate_runs:
-        df_all = _concatenate_runs(data=df_all)
+        data_all = _concatenate_runs(data=data_all)
     if average_runs:
-        df_all["Data"] = (
-            df_all["Data"].apply(np.mean, axis=0).apply(np.expand_dims, axis=0)
+        data_all["Predictions"] = (
+            data_all["Predictions"]
+            .apply(np.mean, axis=0)
+            .apply(np.expand_dims, axis=0)
         )
-    return df_all
+    return data_all
 
 
 def _concatenate_runs(data: pd.DataFrame):
@@ -261,12 +210,9 @@ def _concatenate_runs(data: pd.DataFrame):
     data_list = []
     for subject in data["Subject"].unique():
         dat_sub = data[data["Subject"] == subject]
-        for ch_name in dat_sub["Channel"].unique():
-            dat_concat = np.vstack(
-                dat_sub["Data"][dat_sub["Channel"] == ch_name].to_numpy()
-            )
-            data_list.append([subject, ch_name, dat_concat])
-    return pd.DataFrame(data_list, columns=["Subject", "Channel", "Data"])
+        dat_concat = np.vstack(dat_sub["Predictions"].to_numpy())
+        data_list.append([subject, dat_concat])
+    return pd.DataFrame(data_list, columns=["Subject", "Predictions"])
 
 
 def _load_predictions_single(
@@ -279,38 +225,34 @@ def _load_predictions_single(
     base_end: Optional[int],
 ) -> pd.DataFrame:
     """Load time-locked predictions from single file."""
-    entities = mne_bids.get_entities_from_fname(fpath, on_error="ignore")
-    with open(fpath, "r", encoding="utf-8") as file:
-        preds = json.load(file)
-    data_list = []
-    for ch_name in preds.keys():
-        if any(keyw in ch_name for keyw in ["ECOG", "LFP"]):
-            pred_arr = np.stack(preds[ch_name], axis=0)
-            if baseline:
-                pred_arr = pte_stats.baseline_correct(
-                    pred_arr, baseline_mode, base_start, base_end
-                )
-            data_list.append(
-                [
-                    entities["subject"],
-                    entities["session"],
-                    entities["task"],
-                    entities["run"],
-                    entities["acquisition"],
-                    ch_name,
-                    pred_arr,
-                ]
-            )
-    data = pd.DataFrame(
-        data=data_list,
+    sub, med, stim = pte.filetools.sub_med_stim_from_fname(fpath)
+    with open(fpath, "rb") as file:
+        pred_data = pickle.load(file)
+
+    predictions = np.stack(pred_data["predictions"], axis=0)
+    if baseline:
+        predictions = pte_stats.baseline_correct(
+            predictions, baseline_mode, base_start, base_end
+        )
+
+    data_final = pd.DataFrame(
+        data=(
+            (
+                sub,
+                med,
+                stim,
+                pred_data["trial_ids"],
+                pred_data["times"],
+                predictions,
+            ),
+        ),
         columns=[
             "Subject",
-            "Session",
-            "Task",
-            "Run",
-            "Acquisition",
-            "Channel",
-            "Data",
+            "Medication",
+            "Stimulation",
+            "trial_ids",
+            "times",
+            "Predictions",
         ],
     )
-    return data
+    return data_final

@@ -1,12 +1,15 @@
 """Module for machine learning models."""
 
 from dataclasses import dataclass
+from pathlib import Path
+import pickle
 from typing import Any, Optional, Union
 
 import numpy as np
 import pandas as pd
 from bayes_opt import BayesianOptimization
-from catboost import CatBoostClassifier
+import catboost
+from pte_decode.decoding.decoder_base import Decoder
 from sklearn.discriminant_analysis import (
     LinearDiscriminantAnalysis,
     QuadraticDiscriminantAnalysis,
@@ -15,11 +18,9 @@ from sklearn.dummy import DummyClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import balanced_accuracy_score, log_loss
 from sklearn.model_selection import GroupKFold, GroupShuffleSplit
+import xgboost as xgb
 
 # from sklearn.svm import SVC
-from xgboost import XGBClassifier
-
-from pte_decode.decoding.decoder_base import Decoder
 
 
 def get_decoder(
@@ -146,27 +147,27 @@ class DecoderNotFoundError(Exception):
 class CATB(Decoder):
     """Class for CatBoostClassifier implementation."""
 
-    def __post_init__(self):
-        self.model = CatBoostClassifier(
-            loss_function="MultiClass",
-            verbose=False,
-            use_best_model=True,
-            eval_metric="MultiClass",
-        )
-
-    def fit(
+    def fit_and_predict(
         self,
-        data: Union[pd.DataFrame, pd.Series],
+        data_train: Union[pd.DataFrame, pd.Series],
+        data_test: pd.DataFrame,
         labels: np.ndarray,
         groups: np.ndarray,
-    ) -> None:
+    ) -> pd.Series:
         """Fit model to given training data and training labels."""
-        self.data_train = data
+        self.data_train = data_train
         self.labels_train = labels
         self.groups_train = groups
 
         if self.optimize:
             self.model = self._bayesian_optimization()
+        else:
+            self.model = catboost.CatBoostClassifier(
+                loss_function="MultiClass",
+                verbose=False,
+                use_best_model=True,
+                eval_metric="MultiClass",
+            )
 
         # Train outer model
         (
@@ -196,6 +197,7 @@ class CATB(Decoder):
             sample_weight=sample_weight,
             verbose=False,
         )
+        return self.model.predict(data_test)
 
     def _bayesian_optimization(self):
         """Estimate optimal model parameters using bayesian optimization."""
@@ -212,7 +214,7 @@ class CATB(Decoder):
         optimizer.maximize(init_points=10, n_iter=20, acq="ei")
         params = optimizer.max["params"]
         params["max_depth"] = round(params["max_depth"])
-        return CatBoostClassifier(
+        return catboost.CatBoostClassifier(
             iterations=200,
             loss_function="MultiClass",
             verbose=False,
@@ -260,7 +262,7 @@ class CATB(Decoder):
             data_train_, y_tr, sample_weight = self._balance_samples(
                 data_train_, y_tr, self.balancing
             )
-            inner_model = CatBoostClassifier(
+            inner_model = catboost.CatBoostClassifier(
                 iterations=100,
                 loss_function="MultiClass",
                 verbose=False,
@@ -305,25 +307,42 @@ class LDA(Decoder):
             )
 
     def fit(
-        self, data: np.ndarray, labels: np.ndarray, groups: np.ndarray
-    ) -> None:
+        self,
+        data_train: np.ndarray,
+        labels: np.ndarray,
+        groups: np.ndarray,
+    ):
         """Fit model to given training data and training labels."""
         self.data_train, self.labels_train, _ = self._balance_samples(
-            data, labels, self.balancing
+            data_train, labels, self.balancing
         )
         self.model = LinearDiscriminantAnalysis(
             solver="lsqr", shrinkage="auto"
         )
         self.model.fit(self.data_train, self.labels_train)
 
+    def predict(self, data: pd.DataFrame) -> np.ndarray:
+        return self.model.predict(data)
+
+    def save_model(self, filename: Path | str) -> None:
+        filename = Path(filename).with_suffix(".pickle")
+        with open(filename, "wb") as file:
+            pickle.dump(self.model, file, protocol=pickle.HIGHEST_PROTOCOL)
+
 
 @dataclass
 class LR(Decoder):
     """Basic representation of class for finding and filtering files."""
 
-    def fit(self, data: np.ndarray, labels: np.ndarray, groups) -> None:
+    def fit_and_predict(
+        self,
+        data_train: np.ndarray,
+        data_test: pd.DataFrame,
+        labels: np.ndarray,
+        groups,
+    ) -> None:
         """Fit model to given training data and training labels."""
-        self.data_train = data
+        self.data_train = data_train
         self.labels_train = labels
         self.groups_train = groups
 
@@ -333,10 +352,11 @@ class LR(Decoder):
             self.model = LogisticRegression(solver="newton-cg")
 
         self.data_train, self.labels_train, _ = self._balance_samples(
-            data, labels, self.balancing
+            data_train, labels, self.balancing
         )
 
         self.model.fit(self.data_train, self.labels_train)
+        return self.model.predict(data_test)
 
     def _bayesian_optimization(self):
         """Estimate optimal model parameters using bayesian optimization."""
@@ -388,13 +408,20 @@ class LR(Decoder):
 class Dummy(Decoder):
     """Dummy classifier implementation from scikit learn"""
 
-    def fit(self, data: np.ndarray, labels: np.ndarray, groups) -> None:
+    def fit_and_predict(
+        self,
+        data_train: np.ndarray,
+        data_test: pd.DataFrame,
+        labels: np.ndarray,
+        groups: pd.Series,
+    ) -> np.ndarray:
         """Fit model to given training data and training labels."""
         self.data_train, self.labels_train, _ = self._balance_samples(
-            data, labels, self.balancing
+            data_train, labels, self.balancing
         )
         self.model = DummyClassifier(strategy="uniform")
         self.model.fit(self.data_train, self.labels_train)
+        return self.model.predict(data_test)
 
     def get_score(self, data_test: np.ndarray, label_test: np.ndarray):
         """Calculate score."""
@@ -423,18 +450,77 @@ class QDA(Decoder):
                 " set `optimize` to False."
             )
 
-    def fit(self, data: np.ndarray, labels: np.ndarray, groups) -> None:
+    def fit_and_predict(
+        self,
+        data_train: np.ndarray,
+        labels: np.ndarray,
+        data_test: pd.DataFrame,
+        groups: pd.Series,
+    ) -> None:
         """Fit model to given training data and training labels."""
         self.data_train, self.labels_train, _ = self._balance_samples(
-            data, labels, self.balancing
+            data_train, labels, self.balancing
         )
         self.model = QuadraticDiscriminantAnalysis()
         self.model.fit(self.data_train, self.labels_train)
+        return self.model.predict(data_test)
 
 
 @dataclass
 class XGB(Decoder):
     """Basic representation of class for finding and filtering files."""
+
+    def fit_and_predict(
+        self,
+        data_train: pd.DataFrame,
+        data_test: pd.DataFrame,
+        labels: np.ndarray,
+        groups: np.ndarray,
+    ) -> np.ndarray:
+        """Fit model to given training data and training labels."""
+        self.data_train = data_train
+        self.labels_train = labels
+        self.groups_train = groups
+
+        if self.optimize:
+            self.model = self._bayesian_optimization()
+        else:
+            self.model = xgb.XGBClassifier(
+                objective="binary:logistic",
+                booster="gbtree",
+                use_label_encoder=False,
+                n_estimators=200,
+                eval_metric="logloss",
+            )
+
+        # Train outer model
+        (
+            self.data_train,
+            self.labels_train,
+            eval_set,
+        ) = self._get_validation_split(
+            self.data_train,
+            self.labels_train,
+            self.groups_train,
+            train_size=0.8,
+        )
+        (
+            self.data_train,
+            self.labels_train,
+            sample_weight,
+        ) = self._balance_samples(
+            data=data_train, labels=labels, method=self.balancing
+        )
+
+        self.model.fit(
+            self.data_train,
+            self.labels_train,
+            eval_set=eval_set,
+            early_stopping_rounds=20,
+            sample_weight=sample_weight,
+            verbose=False,
+        )
+        return self.model.predict(data_test)
 
     def _bayesian_optimization(self):
         """Estimate optimal model parameters using bayesian optimization."""
@@ -451,7 +537,7 @@ class XGB(Decoder):
         optimizer.maximize(init_points=10, n_iter=20, acq="ei")
         # Train outer model with optimized parameters
         params = optimizer.max["params"]
-        return XGBClassifier(
+        return xgb.XGBClassifier(
             objective="binary:logistic",
             use_label_encoder=False,
             n_estimators=200,
@@ -493,7 +579,7 @@ class XGB(Decoder):
             (data_train_, y_tr, sample_weight,) = self._balance_samples(
                 data=data_train_, labels=y_tr, method=self.balancing
             )
-            inner_model = XGBClassifier(
+            inner_model = xgb.XGBClassifier(
                 objective="binary:logistic",
                 booster="gbtree",
                 use_label_encoder=False,
@@ -518,53 +604,6 @@ class XGB(Decoder):
             scores.append(score)
         # Return the negative MLOGLOSS
         return -1.0 * np.mean(scores)
-
-    def fit(
-        self, data: pd.DataFrame, labels: np.ndarray, groups: np.ndarray
-    ) -> None:
-        """Fit model to given training data and training labels."""
-        self.data_train = data
-        self.labels_train = labels
-        self.groups_train = groups
-
-        if self.optimize:
-            self.model = self._bayesian_optimization()
-        else:
-            self.model = XGBClassifier(
-                objective="binary:logistic",
-                booster="gbtree",
-                use_label_encoder=False,
-                n_estimators=200,
-                eval_metric="logloss",
-            )
-
-        # Train outer model
-        (
-            self.data_train,
-            self.labels_train,
-            eval_set,
-        ) = self._get_validation_split(
-            self.data_train,
-            self.labels_train,
-            self.groups_train,
-            train_size=0.8,
-        )
-        (
-            self.data_train,
-            self.labels_train,
-            sample_weight,
-        ) = self._balance_samples(
-            data=data, labels=labels, method=self.balancing
-        )
-
-        self.model.fit(
-            self.data_train,
-            self.labels_train,
-            eval_set=eval_set,
-            early_stopping_rounds=20,
-            sample_weight=sample_weight,
-            verbose=False,
-        )
 
     # @dataclass
     # class SVC_Lin(Decoder):

@@ -493,42 +493,46 @@ def _pval_correction_lineplot(
             f"Unknown cluster correction method: {correction_method}."
         )
 
-    if cluster_count > 0:
-        if isinstance(y, (int, float)) and not onesample_xy:
-            y_arr = np.ones((x.shape[0], 1))
-            y_arr[:, 0] = y
-        else:
-            y_arr = y
-        if onesample_xy:
-            x_arr = x
-        else:
-            x_arr = data_a
-        label = f"p-value ≤ {alpha}"
-        x_labels = np.linspace(x_lims[0], x_lims[1], x_arr.shape[0]).round(2)
-        for cluster_idx in range(1, cluster_count + 1):
-            index = np.where(clusters == cluster_idx)[0]
-            lims = np.arange(index[0], index[-1] + 1)
-            y_lims = y_arr.mean(axis=1)[lims]
-            if y_lims.size > 0:
-                ax.fill_between(
-                    x=lims,
-                    y1=x_arr.mean(axis=1)[lims],
-                    y2=y_lims,
-                    alpha=0.5,
-                    color=viridis(7),
-                    label=label,
-                )
-                label = None  # Avoid printing label multiple times
-                for i in [0, -1]:
-                    ax.annotate(
-                        str(x_labels[lims[i]]) + "s",
-                        (lims[i], y_lims[i]),
-                        xytext=(0.0, 15),
-                        textcoords="offset points",
-                        verticalalignment="center",
-                        horizontalalignment="center",
-                        arrowprops=dict(facecolor="black", arrowstyle="-"),
-                    )
+    if cluster_count <= 0:
+        print("No clusters found.")
+        return
+    if isinstance(y, (int, float)) and not onesample_xy:
+        y_arr = np.ones((x.shape[0], 1))
+        y_arr[:, 0] = y
+    else:
+        y_arr = y
+    if onesample_xy:
+        x_arr = x
+    else:
+        x_arr = data_a
+    label = f"p-value ≤ {alpha}"
+    x_labels = np.linspace(x_lims[0], x_lims[1], x_arr.shape[0]).round(2)
+    for cluster_idx in range(1, cluster_count + 1):
+        index = np.where(clusters == cluster_idx)[0]
+        lims = np.arange(index[0], index[-1] + 1)
+        y_lims = y_arr.mean(axis=1)[lims]
+        if y_lims.size <= 0:
+            print("No clusters found.")
+            return
+        ax.fill_between(
+            x=lims,
+            y1=x_arr.mean(axis=1)[lims],
+            y2=y_lims,
+            alpha=0.5,
+            color=viridis(7),
+            label=label,
+        )
+        label = None  # Avoid printing label multiple times
+        for i in [0, -1]:
+            ax.annotate(
+                str(x_labels[lims[i]]) + "s",
+                (lims[i], y_lims[i]),
+                xytext=(0.0, 15),
+                textcoords="offset points",
+                verticalalignment="center",
+                horizontalalignment="center",
+                arrowprops=dict(facecolor="black", arrowstyle="-"),
+            )
 
 
 def lineplot_prediction_single(
