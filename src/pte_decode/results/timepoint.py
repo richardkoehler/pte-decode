@@ -1,6 +1,4 @@
 """Module for calculating earliest significant time point of prediction."""
-from typing import Sequence
-
 import numpy as np
 
 import pte_stats
@@ -8,9 +6,8 @@ import pte_stats
 
 def get_earliest_timepoint(
     data: np.ndarray,
-    x_lims: tuple,
-    sfreq: int | float | None = None,
-    threshold: int | float | tuple[int | float, int | float] = (0.0, 1.0),
+    times: np.ndarray,
+    threshold: int | float | tuple[int | float, int | float] = 0,
     n_perm: int = 1000,
     alpha: float = 0.05,
     correction_method: str = "cluster",
@@ -38,7 +35,7 @@ def get_earliest_timepoint(
     data_t = data.T
 
     threshold_value, _ = transform_threshold(
-        threshold=threshold, sfreq=sfreq, data=data_t
+        threshold=threshold, times=times, data=data_t
     )
     if correction_method == "cluster":
         _, clusters_ind = pte_stats.cluster_analysis_1d(
@@ -78,9 +75,8 @@ def get_earliest_timepoint(
             print("No significant clusters found.")
         return
 
-    x_labels = np.linspace(x_lims[0], x_lims[1], data.shape[1]).round(2)
     index = np.where(clusters != 0)[0][0]
-    return x_labels[index]
+    return times[index]
 
 
 def downsample_trials(data: np.ndarray, n_samples: int) -> np.ndarray:
@@ -113,16 +109,17 @@ def upsample_trials(data: np.ndarray, n_samples: int) -> np.ndarray:
 
 
 def transform_threshold(
-    threshold: int | float | Sequence,
+    threshold: int | float | tuple[int | float, int | float],
     data: np.ndarray,
-    sfreq: int | float | None = None,
+    times: np.ndarray | None = None,
 ):
     """Take threshold input and return threshold value and array."""
     if isinstance(threshold, (int, float)):
         threshold_value = threshold
     else:
-        threshold_value = np.mean(
-            data[int(threshold[0] * sfreq) : int(threshold[1] * sfreq)]
+        base_start, base_end = pte_stats.handle_baseline_bytimes(
+            baseline=threshold, times=times
         )
-    threshold_arr = np.ones(data.shape[0]) * threshold_value
-    return threshold_value, threshold_arr
+        threshold_value = np.mean(data[base_start:base_end])
+    threshold_array = np.ones(data.shape[0]) * threshold_value
+    return threshold_value, threshold_array

@@ -1,8 +1,7 @@
 """Module for plotting decoding results."""
-import os
 from itertools import combinations, product
 from pathlib import Path
-from typing import Callable, Iterable, Optional, Sequence, Union
+from typing import Callable, Iterable, Sequence
 
 import numpy as np
 import pandas as pd
@@ -19,30 +18,38 @@ import pte_stats
 
 def violinplot_results(
     data: pd.DataFrame,
-    outpath: Union[str, Path],
     x: str,
     y: str,
-    hue: Optional[str] = None,
-    order: Optional[Union[Sequence, np.ndarray]] = None,
-    hue_order: Optional[Union[Sequence, np.ndarray]] = None,
-    stat_test: Optional[Union[Callable, str]] = "Permutation",
+    outpath: str | Path | None = None,
+    hue: str | None = None,
+    order: Sequence | None = None,
+    hue_order: Sequence | None = None,
+    stat_test: str | Callable | None = "Permutation",
     alpha: float = 0.05,
-    add_lines: Optional[str] = None,
-    title: Optional[str] = "Classification Performance",
-    figsize: Union[tuple, str] = "auto",
-) -> None:
+    add_lines: str | None = None,
+    title: str | None = "Classification Performance",
+    figsize: tuple | str = "auto",
+    show: bool = True,
+) -> figure.Figure:
     """Plot performance as violinplot."""
     if order is None:
         order = data[x].unique()
 
-    if hue and hue_order is None:
+    if hue and not hue_order:
         hue_order = data[hue].unique()
 
-    if figsize == "auto":
-        hue_factor = 1 if not hue else len(hue_order)
-        figsize = (1.1 * len(order) * hue_factor, 4)
+    fig, ax = plt.subplots(nrows=1, ncols=1)
 
-    fig, ax = plt.subplots(nrows=1, ncols=1, figsize=figsize)
+    if figsize == "auto":
+        if hue:
+            hue_factor = len(hue_order)
+        else:
+            hue_factor = 1
+        fig.set_figwidth(1.2 * len(order) * hue_factor)
+        fig.set_figheight(4.8)
+    else:
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
 
     ax = sns.violinplot(
         x=x,
@@ -51,7 +58,7 @@ def violinplot_results(
         order=order,
         hue_order=hue_order,
         data=data,
-        palette="viridis",
+        # palette="viridis",
         inner="box",
         width=0.9,
         alpha=0.8,
@@ -104,7 +111,7 @@ def violinplot_results(
     xlabels = [item.get_text() for item in ax.get_xticklabels()]
     new_xlabels = [xtick.replace(" ", "\n") for xtick in xlabels]
     ax.set_xticklabels(new_xlabels)
-    ax.set_title(title, fontsize="medium", y=1.02)
+    ax.set_title(title, y=1.02)  # , fontsize="medium")
 
     if add_lines:
         _add_lines(
@@ -112,125 +119,11 @@ def violinplot_results(
         )
 
     fig.tight_layout()
-    fig.savefig(outpath, bbox_inches="tight", dpi=450)
-    plt.show(block=True)
-
-
-def boxplot_results(
-    data: pd.DataFrame,
-    outpath: Union[str, Path],
-    x: str,
-    y: str,
-    hue: Optional[str] = None,
-    order: Optional[Iterable] = None,
-    hue_order: Optional[Iterable] = None,
-    stat_test: Optional[Union[Callable, str]] = "Permutation",
-    alpha: Optional[float] = 0.05,
-    add_lines: Optional[str] = None,
-    add_median_labels: bool = False,
-    title: Optional[str] = "Classification Performance",
-    figsize: Union[tuple, str] = "auto",
-) -> None:
-    """Plot performance as combined boxplot and stripplot."""
-    # data = data[["Channels", "Balanced Accuracy", "Subject"]]
-
-    color = "black"
-    alpha_box = 0.5
-
-    if not order:
-        order = data[x].unique()
-
-    if hue and not hue_order:
-        hue_order = data[hue].unique()
-
-    if figsize == "auto":
-        hue_factor = 1 if not hue else len(hue_order)
-        figsize = (1.1 * len(order) * hue_factor, 4)
-
-    plt.figure(figsize=figsize)
-
-    ax = sns.boxplot(
-        x=x,
-        y=y,
-        hue=hue,
-        order=order,
-        hue_order=hue_order,
-        data=data,
-        palette="viridis",
-        boxprops=dict(alpha=alpha_box),
-        showcaps=True,
-        showbox=True,
-        showfliers=False,
-        notch=False,
-        width=0.9,
-        whiskerprops={
-            "linewidth": 2,
-            "zorder": 10,
-            "alpha": alpha_box,
-            "color": color,
-        },
-        capprops={"alpha": alpha_box, "color": color},
-        medianprops=dict(
-            linestyle="-", linewidth=5, color=color, alpha=alpha_box
-        ),
-    )
-
-    if add_median_labels:
-        _add_median_labels(ax)
-
-    sns.swarmplot(
-        x=x,
-        y=y,
-        hue=hue,
-        order=order,
-        hue_order=hue_order,
-        data=data,
-        palette="viridis",
-        dodge=True,
-        s=6,
-        ax=ax,
-    )
-
-    if hue:
-        handles, labels = ax.get_legend_handles_labels()
-        new_labels = [
-            label.replace(" ", "\n") for label in labels[: len(labels) // 2]
-        ]
-        _ = plt.legend(
-            handles[: len(handles) // 2],
-            new_labels,
-            bbox_to_anchor=(1.02, 1),
-            loc=2,
-            borderaxespad=0.0,
-            title=hue,
-            labelspacing=0.7,
-        )
-
-    xlabels = [item.get_text() for item in ax.get_xticklabels()]
-    new_xlabels = [xtick.replace(" ", "\n") for xtick in xlabels]
-    ax.set_xticklabels(new_xlabels)
-    ax.set_title(title, fontsize="medium", y=1.02)
-
-    if add_lines:
-        _add_lines(
-            ax=ax, data=data, x=x, y=y, order=order, add_lines=add_lines
-        )
-
-    if stat_test:
-        _add_stats(
-            ax,
-            data,
-            x,
-            y,
-            order,
-            hue,
-            hue_order,
-            stat_test=stat_test,
-            alpha=alpha,
-        )
-    plt.tight_layout()
-    plt.savefig(outpath, bbox_inches="tight", dpi=450)
-    plt.show(block=True)
+    if outpath is not None:
+        fig.savefig(outpath, bbox_inches="tight")
+    if show is True:
+        plt.show(block=True)
+    return fig
 
 
 def _add_lines(
@@ -260,9 +153,9 @@ def _add_stats(
     x: str,
     y: str,
     order: Iterable,
-    hue: Optional[str],
-    hue_order: Optional[Iterable],
-    stat_test: Union[str, StatTest.StatTest],
+    hue: str | None,
+    hue_order: Iterable | None,
+    stat_test: str | StatTest.StatTest,
     alpha: float,
     location: str = "inside",
 ):
@@ -308,23 +201,20 @@ def _add_stats(
 
 def lineplot_prediction(
     x_1: np.ndarray,
-    subplot_titles: Sequence,
-    sfreq: Union[int, float],
+    times: np.ndarray,
+    data_labels: Sequence,
+    sfreq: int | float,
     x_lims: tuple,
-    x_2: Optional[np.ndarray] = None,
-    outpath: Optional[Union[Path, str]] = None,
-    title: Optional[str] = None,
-    label: Optional[str] = None,
+    x_2: np.ndarray | None = None,
+    outpath: Path | str | None = None,
     x_label: str = "Time (s)",
-    y_label: Optional[str] = None,
-    threshold: Union[
-        int, float, tuple[Union[int, float], Union[int, float]]
-    ] = (0.0, 1.0),
+    y_label: str | None = None,
+    threshold: int | float | tuple[int | float, int | float] = (0.0, 1.0),
     alpha: float = 0.05,
     n_perm: int = 1000,
     correction_method: str = "cluster",
     two_tailed: bool = False,
-    y_lims: Optional[Sequence] = None,
+    y_lims: Sequence | None = None,
     compare_x1x2: bool = False,
     paired_x1x2: bool = False,
     show_plot: bool = True,
@@ -342,10 +232,13 @@ def lineplot_prediction(
         nrows = 1
 
     fig, axs = plt.subplots(
-        ncols=1, nrows=nrows, figsize=(6, 2.0 * nrows), sharey=True
+        ncols=1,
+        nrows=nrows,
+        figsize=(5.6, 4.8),
+        sharex=True,
+        sharey=True,
     )
     if x_2 is None:
-        # for compatibility
         axs = [axs]
 
     n_samples = x_1.shape[0]
@@ -354,13 +247,13 @@ def lineplot_prediction(
         if data is not None:
             lineplot_prediction_single(
                 data=data,
+                times=times,
                 ax=axs[i],
+                label=data_labels[i],
                 threshold=threshold,
-                sfreq=sfreq,
                 x_lims=x_lims,
                 color=colors[i],
-                subplot_title=subplot_titles[i],
-                label=label,
+                subplot_title=data_labels[i],
                 alpha=alpha,
                 n_perm=n_perm,
                 correction_method=correction_method,
@@ -373,15 +266,10 @@ def lineplot_prediction(
                 "If `compare_x1x2` is `True`, data for `x2` must be provided."
             )
         for i, data in enumerate([x_1, x_2]):
-            single_label = (
-                " - ".join((subplot_titles[i], label))
-                if label
-                else subplot_titles[i]
-            )
             axs[2].plot(
                 data.mean(axis=1),
                 color=colors[i],
-                label=single_label,
+                label=data_labels[i],
             )
             axs[2].fill_between(
                 np.arange(data.shape[0]),
@@ -391,9 +279,8 @@ def lineplot_prediction(
                 color=colors[i],
             )
         axs[2].set_title(
-            f"{subplot_titles[0]} vs. {subplot_titles[1]}", fontsize="medium"
+            f"{data_labels[0]} vs. {data_labels[1]}"  # , fontsize="medium"
         )
-        axs[2].set_xlabel("Time [s]")
 
         _pval_correction_lineplot(
             ax=axs[2],
@@ -409,20 +296,21 @@ def lineplot_prediction(
         )
     xticks = np.arange(0, n_samples, sfreq)
     xticklabels = np.linspace(x_lims[0], x_lims[1], len(xticks)).round(1)
+
+    axs[-1].set_xticks(xticks)
+    axs[-1].set_xticklabels(xticklabels)
+    axs[-1].set_xlabel(x_label)
+
     for ax in axs:
-        ax.legend(loc="upper left", fontsize="small")
+        ax.legend(loc="upper left", bbox_to_anchor=(1.0, 1.05))
         if y_lims:
             ax.set_ylim(y_lims[0], y_lims[1])
 
-        ax.set_xticks(xticks)
-        ax.set_xticklabels(xticklabels)
         ax.set_ylabel(y_label)
-        ax.set_xlabel(x_label)
 
-    fig.suptitle(title, fontsize="large", y=1.01)
     fig.tight_layout()
     if outpath:
-        fig.savefig(os.path.normpath(outpath), bbox_inches="tight", dpi=300)
+        fig.savefig(outpath, bbox_inches="tight", dpi=300)
     if show_plot:
         plt.show(block=True)
     return fig
@@ -440,7 +328,7 @@ def _permutation_wrapper(x, y, n_perm) -> tuple:
 def _pval_correction_lineplot(
     ax: axes.Axes,
     x: np.ndarray,
-    y: Union[int, float, np.ndarray],
+    y: int | float | np.ndarray,
     x_lims: tuple,
     alpha: float,
     correction_method: str,
@@ -505,7 +393,7 @@ def _pval_correction_lineplot(
         x_arr = x
     else:
         x_arr = data_a
-    label = f"p-value ≤ {alpha}"
+    label = f"p ≤ {alpha}"
     x_labels = np.linspace(x_lims[0], x_lims[1], x_arr.shape[0]).round(2)
     for cluster_idx in range(1, cluster_count + 1):
         index = np.where(clusters == cluster_idx)[0]
@@ -537,12 +425,12 @@ def _pval_correction_lineplot(
 
 def lineplot_prediction_single(
     data: np.ndarray,
+    times: np.ndarray,
     ax: axes.Axes,
-    threshold: Union[Iterable, int, float],
-    sfreq: Union[int, float],
+    label: str,
+    threshold: Iterable | int | float,
     x_lims: tuple,
     color: tuple,
-    label: Optional[str],
     subplot_title: str,
     alpha: float,
     n_perm: int,
@@ -554,7 +442,9 @@ def lineplot_prediction_single(
         threshold_value,
         threshold_arr,
     ) = pte_decode.results.timepoint.transform_threshold(
-        threshold=threshold, sfreq=sfreq, data=data
+        threshold=threshold,
+        data=data,
+        times=times,
     )
 
     # x = np.arange(data.shape[0])
@@ -597,7 +487,7 @@ def lineplot_prediction_single(
         onesample_xy=False,
     )
 
-    ax.set_title(subplot_title, fontsize="medium")
+    ax.set_title(subplot_title)  # , fontsize="medium")
 
 
 def _add_median_labels(ax: axes.Axes, add_borders: bool = False) -> None:
@@ -622,7 +512,7 @@ def _add_median_labels(ax: axes.Axes, add_borders: bool = False) -> None:
             va="center",
             fontweight="light",
             color="white",
-            fontsize="medium",
+            # fontsize="medium",
         )
         if add_borders:
             # create median-colored border around white text for contrast

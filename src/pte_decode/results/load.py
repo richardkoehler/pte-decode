@@ -2,7 +2,6 @@
 import json
 from pathlib import Path
 import pickle
-from typing import Optional, Union
 
 import mne_bids
 import numpy as np
@@ -13,7 +12,7 @@ import pte_stats
 
 
 def load_results_singlechannel(
-    files_or_dir: Union[str, list, Path],
+    files_or_dir: str | Path | list,
     scoring_key: str = "balanced_accuracy",
     average_runs: bool = False,
 ) -> pd.DataFrame:
@@ -59,7 +58,6 @@ def load_results_singlechannel(
 
 def load_scores(
     files: str | Path | list,
-    scoring_key: str = "balanced_accuracy",
     average_runs: bool = True,
 ) -> pd.DataFrame:
     """Load prediction scores from *Scores.csv"""
@@ -68,20 +66,22 @@ def load_scores(
     results = []
     for file in files:
         sub, med, stim = pte.filetools.sub_med_stim_from_fname(file)
-        score = pd.read_csv(file, header=[0]).loc[:, scoring_key].mean()
-        print(score)
-        results.append((file, sub, med, stim, score))
-    columns = [
-        "Filename",
-        "Subject",
-        "Medication",
-        "Stimulation",
-        scoring_key,
-    ]
-    final = pd.DataFrame(results, columns=columns)
+        data = (
+            pd.read_csv(file)
+            .drop(columns=["fold", "trial_ids"])
+            .groupby(["channel"])
+            .mean()
+            .reset_index()
+        )
+        data["Filename"] = file
+        data["Subject"] = sub
+        data["Medication"] = med
+        data["Stimulation"] = stim
+        results.append(data)
+    final = pd.concat(results)
     if average_runs:
         final = (
-            final.groupby(["Subject", "Medication", "Stimulation"])
+            final.groupby(["Subject", "Medication", "Stimulation", "channel"])
             .mean()
             .reset_index()
         )
@@ -98,8 +98,8 @@ def _normalize_columns(columns: list[str]) -> list[str]:
 
 
 def _handle_files_or_dir(
-    files_or_dir: Union[str, list, Path],
-    extensions: Optional[Union[str, list]] = None,
+    files_or_dir: str | Path | list,
+    extensions: str | list | None = None,
 ) -> list:
     """Handle different cases of files_or_dir."""
     if isinstance(files_or_dir, list):
@@ -114,13 +114,11 @@ def _handle_files_or_dir(
 
 
 def _load_labels_single(
-    fpath: Union[str, Path],
-    baseline: Optional[
-        tuple[Optional[Union[int, float]], Optional[Union[int, float]]]
-    ],
-    baseline_mode: Optional[str],
-    base_start: Optional[int],
-    base_end: Optional[int],
+    fpath: str | Path,
+    baseline: tuple[int | float | None, int | float | None] | None,
+    baseline_mode: str | None,
+    base_start: int | None,
+    base_end: int | None,
 ) -> pd.DataFrame:
     """Load time-locked predictions from single file."""
     sub, med, stim = pte.filetools.sub_med_stim_from_fname(fpath)
@@ -158,33 +156,26 @@ def _load_labels_single(
 
 
 def load_predictions(
-    files_or_dir: Union[str, list, Path],
-    sfreq: Optional[Union[int, float]] = None,
-    baseline: Optional[
-        tuple[Optional[Union[int, float]], Optional[Union[int, float]]]
-    ] = None,
+    files_or_dir: str | Path | list,
+    baseline: tuple[int | float | None, int | float | None] | None = None,
     baseline_mode: str = "zscore",
+    baseline_trialwise: bool = False,
     average_predictions: bool = False,
     concatenate_runs: bool = True,
     average_runs: bool = False,
 ) -> pd.DataFrame:
     """Load time-locked predictions."""
     files_or_dir = _handle_files_or_dir(
-        files_or_dir=files_or_dir, extensions="predictions_timelocked.json"
-    )
-
-    base_start, base_end = pte_stats.handle_baseline(
-        baseline=baseline, sfreq=sfreq
+        files_or_dir=files_or_dir, extensions="PredTimelocked.pickle"
     )
 
     df_list = []
     for fpath in files_or_dir:
-        data_single = _load_predictions_single(
+        data_single = load_predictions_singlefile(
             fpath=fpath,
             baseline=baseline,
             baseline_mode=baseline_mode,
-            base_start=base_start,
-            base_end=base_end,
+            baseline_trialwise=baseline_trialwise,
         )
         if average_predictions:
             data_single["Predictions"] = (
@@ -215,24 +206,30 @@ def _concatenate_runs(data: pd.DataFrame):
     return pd.DataFrame(data_list, columns=["Subject", "Predictions"])
 
 
-def _load_predictions_single(
-    fpath: Union[str, Path],
-    baseline: Optional[
-        tuple[Optional[Union[int, float]], Optional[Union[int, float]]]
-    ],
-    baseline_mode: str,
-    base_start: Optional[int],
-    base_end: Optional[int],
+def load_predictions_singlefile(
+    fpath: str | Path,
+    baseline: tuple[int | float | None, int | float | None]
+    | None = (None, None),
+    baseline_mode: str = "zscore",
+    baseline_trialwise: bool = False,
 ) -> pd.DataFrame:
     """Load time-locked predictions from single file."""
     sub, med, stim = pte.filetools.sub_med_stim_from_fname(fpath)
     with open(fpath, "rb") as file:
         pred_data = pickle.load(file)
-
     predictions = np.stack(pred_data["predictions"], axis=0)
+    times = np.array(pred_data["times"])
+
+    base_start, base_end = pte_stats.handle_baseline_bytimes(
+        baseline=baseline, times=times
+    )
     if baseline:
         predictions = pte_stats.baseline_correct(
-            predictions, baseline_mode, base_start, base_end
+            data=predictions,
+            baseline_mode=baseline_mode,
+            base_start=base_start,
+            base_end=base_end,
+            baseline_trialwise=baseline_trialwise,
         )
 
     data_final = pd.DataFrame(

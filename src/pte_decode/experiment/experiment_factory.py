@@ -3,12 +3,13 @@ from pathlib import Path
 from typing import Sequence
 
 import mne_bids
+import pandas as pd
 import pte_decode
 from joblib import Parallel, delayed
 from sklearn.model_selection import BaseCrossValidator
 
 
-def run_pipeline_decoding(
+def run_pipeline_multiproc(
     filepaths_features: list[str] | list[Path],
     n_jobs: int = 1,
     **kwargs,
@@ -17,32 +18,33 @@ def run_pipeline_decoding(
     if not filepaths_features:
         raise ValueError("No feature files specified.")
     if len(filepaths_features) == 1 or n_jobs in (0, 1):
-        (
-            pynm_experiment(
-                feature_file=feature_file,
+        for feature_file in filepaths_features:
+            run_pipeline(
+                filename=feature_file,
                 **kwargs,
             )
-            for feature_file in filepaths_features
-        )
     Parallel(n_jobs=n_jobs)(
-        delayed(pynm_experiment)(feature_file=feature_file, **kwargs)
+        delayed(run_pipeline)(filename=feature_file, **kwargs)
         for feature_file in filepaths_features
     )
 
 
-def pynm_experiment(
+def run_pipeline(
     feature_root: Path | str,
-    feature_file: Path | str,
-    classifier: str,
+    filename: Path | str,
     label_channels: Sequence[str],
-    target_begin: str | int | float,
-    target_end: str | int | float,
-    optimize: bool,
-    balancing: str | None,
     out_root: Path | str,
     feature_keywords: Sequence[str],
     cross_validation: BaseCrossValidator,
     plotting_target_channels: list[str],
+    target_begin: str | int | float,
+    target_end: str | int | float,
+    pipeline_steps: list[str] = ["clean", "engineer", "select", "decode"],
+    features: pd.DataFrame | None = None,
+    classifier: str = "lda",
+    optimize: bool = False,
+    balancing: str | None = None,
+    side: str | None = None,
     channels_used: str = "single",
     types_used: str | Sequence[str] = "all",
     hemispheres_used: str = "both",
@@ -52,6 +54,7 @@ def pynm_experiment(
     pred_begin: int | float = -3.0,
     pred_end: int | float = 2.0,
     use_times: int = 1,
+    normalization_mode: str | None = None,
     dist_end: int | float = 2.0,
     excep_dist_end: int | float = 2.0,
     exception_keywords: Sequence[str] | None = None,
@@ -59,74 +62,79 @@ def pynm_experiment(
     verbose: bool = True,
     rest_begin: int | float = -5.0,
     rest_end: int | float = -2.0,
+    **kwargs,
 ) -> None:
     """Run experiment with single file."""
-    import pte  # pylint: disable=import-outside-toplevel
-    from py_neuromodulation import (  # pylint: disable=import-outside-toplevel
-        nm_analysis,
-    )
+    print(f"Using file: {filename}")
+    if features is None:
+        if str(filename).endswith("_FEATURES.csv"):
+            filename = str(filename)[:-13]
+            features, ch_names, ch_types, sfreq = load_pynm_features(
+                feature_root, filename
+            )
+        else:
+            raise ValueError(
+                "Feature file must end with '_FEATURES.csv'. Got:"
+                f"{filename}"
+            )
+    filename = str(Path(filename).with_suffix("").name)
+    if side == "auto":
+        side = _get_trial_side(fname=filename)
 
-    print("Using file: ", feature_file)
-    # Read features
-    nm_reader = nm_analysis.Feature_Reader(
-        feature_dir=str(feature_root), feature_file=str(feature_file)
-    )
-    features_raw = nm_reader.feature_arr
+    if "clean" in pipeline_steps:
+        outpath_feat_clean, file_suffix = _outpath_feat_clean(
+            root=out_root,
+            fname=filename,
+            types_used=types_used,
+            hemispheres_used=hemispheres_used,
+        )
+        # Clean features
+        features, label, plotting_target = pte_decode.FeatureCleaner(
+            data_channel_names=ch_names,
+            data_channel_types=ch_types,
+            label_channels=label_channels,
+            plotting_target_channels=plotting_target_channels,
+            side=side,
+            types_used=types_used,
+            hemispheres_used=hemispheres_used,
+        ).run(features=features, out_path=outpath_feat_clean)
 
-    ch_types_all = nm_reader.nm_channels[["new_name", "type"]].set_index(
-        "new_name"
-    )
-    ch_names = nm_reader.sidecar["ch_names"]
-    ch_types = ch_types_all.loc[ch_names, "type"].tolist()  # type: ignore
-    side = _get_trial_side(fname=feature_file)
+    if "engineer" in pipeline_steps:
+        # Engineer features
+        outpath_feat_eng, file_suffix = _outpath_feat_eng(
+            root=out_root,
+            fname=filename,
+            suffix=file_suffix,
+            use_times=use_times,
+        )
+        features = pte_decode.FeatureEngineer(
+            use_times=use_times,
+            normalization_mode=normalization_mode,
+            verbose=verbose,
+        ).run(features, out_path=outpath_feat_eng)
 
-    outpath_feat_clean, file_suffix = _outpath_feat_clean(
-        root=out_root,
-        fname=feature_file,
-        types_used=types_used,
-        hemispheres_used=hemispheres_used,
-    )
-    # Clean features
-    features_clean, label, plotting_target = pte_decode.FeatureCleaner(
-        data_channel_names=ch_names,
-        data_channel_types=ch_types,
-        label_channels=label_channels,
-        plotting_target_channels=plotting_target_channels,
-        side=side,
-        types_used=types_used,
-        hemispheres_used=hemispheres_used,
-    ).run(features=features_raw, out_path=outpath_feat_clean)
-
-    # Engineer features
-    outpath_feat_eng, file_suffix = _outpath_feat_eng(
-        root=out_root,
-        fname=feature_file,
-        suffix=file_suffix,
-        use_times=use_times,
-    )
-    features_eng = pte_decode.FeatureEngineer(
-        use_times=use_times, verbose=verbose
-    ).run(features_clean, out_path=outpath_feat_eng)
-
-    # Select features
-    outpath_feat_sel, file_suffix = _outpath_feat_sel(
-        root=out_root,
-        fname=feature_file,
-        suffix=file_suffix,
-    )
-    features_sel = pte_decode.FeatureSelector(
-        feature_keywords=feature_keywords, verbose=verbose
-    ).run(features_eng, out_path=outpath_feat_sel)
+    if "select" in pipeline_steps:
+        # Select features
+        outpath_feat_sel, file_suffix = _outpath_feat_sel(
+            root=out_root,
+            fname=filename,
+            suffix=file_suffix,
+        )
+        features = pte_decode.FeatureSelector(
+            feature_keywords=feature_keywords, verbose=verbose
+        ).run(features, out_path=outpath_feat_sel)
 
     # Handle bad events file
+    import pte  # pylint: disable=import-outside-toplevel
+
     bad_epochs_df = pte.filetools.get_bad_epochs(
-        bad_epochs_dir=bad_epochs_path, filename=feature_file
+        bad_epochs_dir=bad_epochs_path, filename=filename
     )
     bad_epochs = bad_epochs_df.event_id.to_numpy()
 
     # Handle exception files
     dist_end = _handle_exception_files(
-        fname=feature_file,
+        fname=filename,
         dist_end=dist_end,
         excep_dist_end=excep_dist_end,
         exception_keywords=exception_keywords,
@@ -135,7 +143,7 @@ def pynm_experiment(
     # Get feature epochs
     path_feat_epochs, file_suffix = _outpath_feat_epochs(
         root=out_root,
-        fname=feature_file,
+        fname=filename,
         suffix=file_suffix,
         target_begin=target_begin,
         target_end=target_end,
@@ -151,62 +159,87 @@ def pynm_experiment(
         epoch_end=pred_end,
         verbose=verbose,
     ).run(
-        features=features_sel,
+        features=features,
         label=label,
         plotting_target=plotting_target,
-        sfreq=nm_reader.settings["sampling_rate_features_hz"],
+        sfreq=sfreq,
         bad_epochs=bad_epochs,
         out_path=path_feat_epochs,
     )
 
-    label_concat = features_concat["labels"]
-    trial_ids = features_concat["trial_ids"]
-    features_concat = features_concat.drop(
-        columns=["time", "time relative", "labels", "trial_ids"]
+    if "decode" in pipeline_steps:
+        label_concat = features_concat["labels"]
+        trial_ids = features_concat["trial_ids"]
+        features_concat = features_concat.drop(
+            columns=["time", "time relative", "labels", "trial_ids"]
+        )
+
+        # Generate output file name
+        outpath_predict, file_suffix = _outpath_predict(
+            root=out_root,
+            fname=filename,
+            suffix=file_suffix,
+            classifier=classifier,
+            optimize=optimize,
+        )
+        outpath_predict.parent.mkdir(exist_ok=True, parents=True)
+
+        decoder = pte_decode.get_decoder(
+            classifier=classifier,
+            scoring=scoring,
+            balancing=balancing,
+            optimize=optimize,
+        )
+        # Initialize Experiment instance
+        experiment = pte_decode.DecodingExperiment(
+            features=features_concat,
+            features_timelocked=features_timelocked,
+            times_timelocked=features_timelocked["time"],
+            labels=label_concat,
+            trial_ids=trial_ids,
+            plotting_data=plotting_target,
+            ch_names=ch_names,
+            decoder=decoder,
+            scoring=scoring,
+            feature_importance=feature_importance,
+            channels_used=channels_used,
+            prediction_mode=pred_mode,
+            cv_outer=cross_validation,
+            verbose=verbose,
+            **kwargs,
+        )
+        experiment.run()
+        experiment.save(
+            path=outpath_predict,
+            scores=True,
+            predictions_concatenated=True,
+            predictions_timelocked=True,
+            feature_importances=True,
+            final_models=False,
+        )
+
+
+def load_pynm_features(
+    feature_root: Path | str, fpath: Path | str
+) -> tuple[pd.DataFrame, list[str], list[str], int | float]:
+    from py_neuromodulation import (  # pylint: disable=import-outside-toplevel
+        nm_analysis,
     )
 
-    # Generate output file name
-    outpath_predict, file_suffix = _outpath_predict(
-        root=out_root,
-        fname=feature_file,
-        suffix=file_suffix,
-        classifier=classifier,
-        optimize=optimize,
+    nm_reader = nm_analysis.Feature_Reader(
+        feature_dir=str(feature_root), feature_file=str(fpath)
     )
-    outpath_predict.parent.mkdir(exist_ok=True, parents=True)
 
-    decoder = pte_decode.get_decoder(
-        classifier=classifier,
-        scoring=scoring,
-        balancing=balancing,
-        optimize=optimize,
+    ch_types_all = nm_reader.nm_channels[["new_name", "type"]].set_index(
+        "new_name"
     )
-    # Initialize Experiment instance
-    experiment = pte_decode.DecodingExperiment(
-        features=features_concat,
-        features_timelocked=features_timelocked,
-        times_timelocked=features_timelocked["time"],
-        labels=label_concat,
-        trial_ids=trial_ids,
-        plotting_data=plotting_target,
-        ch_names=ch_names,
-        decoder=decoder,
-        bad_epochs=bad_epochs,
-        scoring=scoring,
-        feature_importance=feature_importance,
-        channels_used=channels_used,
-        prediction_mode=pred_mode,
-        cv_outer=cross_validation,
-        verbose=verbose,
-    )
-    experiment.run()
-    experiment.save(
-        path=outpath_predict,
-        scores=True,
-        predictions_concatenated=True,
-        predictions_timelocked=True,
-        feature_importances=True,
-        final_models=True,
+    ch_names = nm_reader.sidecar["ch_names"]
+    ch_types = ch_types_all.loc[ch_names, "type"].tolist()  # type: ignore
+    return (
+        nm_reader.feature_arr,
+        ch_names,
+        ch_types,
+        nm_reader.settings["sampling_rate_features_hz"],
     )
 
 

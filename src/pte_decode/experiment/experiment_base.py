@@ -166,12 +166,12 @@ class _Results:
     def save_predictions_concatenated(self) -> None:
         """Save concatenated predictions"""
         pd.DataFrame(self.predictions_concat).to_csv(
-            self.path + "_PredictionsConcatenated.csv", index=False
+            self.path + "_PredConcatenated.csv", index=False
         )
 
     def save_predictions_timelocked(self) -> None:
         """Save predictions time-locked to trial onset"""
-        with open(self.path + "_PredictionsTimelocked.pickle", "wb") as file:
+        with open(self.path + "_PredTimelocked.pickle", "wb") as file:
             pickle.dump(
                 self.predictions_epochs, file, protocol=pickle.HIGHEST_PROTOCOL
             )
@@ -192,7 +192,7 @@ class _Results:
                 "feature_importance",
             ],
             index=None,
-        ).to_csv(self.path + "_FeatureImportances.csv", index=False)
+        ).to_csv(self.path + "_FeatImportances.csv", index=False)
 
 
 @dataclass
@@ -207,13 +207,12 @@ class DecodingExperiment:
     plotting_data: pd.Series
     ch_names: list[str]
     decoder: pte_decode.Decoder
-    bad_epochs: np.ndarray | None = None
     scoring: str = "balanced_accuracy"
     feature_importance: Any = False
     channels_used: str = "single"
     prediction_mode: str = "classify"
-    cv_outer: BaseCrossValidator = GroupKFold(n_splits=5)
-    cv_inner: BaseCrossValidator = GroupKFold(n_splits=5)
+    cv_outer: BaseCrossValidator | None = GroupKFold(n_splits=5)
+    cv_inner: BaseCrossValidator | None = GroupKFold(n_splits=5)
     verbose: bool = False
     data_epochs: np.ndarray = field(init=False)
     fold: int = field(init=False)
@@ -318,6 +317,8 @@ class DecodingExperiment:
         )
         for ch_pick in ch_picks:
             cols = self._pick_features(ch_pick)
+            if not cols:
+                continue
             if self.verbose:
                 print("No. of features used:", len(cols))
             data_train = self.features[cols]
@@ -326,7 +327,9 @@ class DecodingExperiment:
                 labels=self.labels,
                 groups=self.trial_ids,
             )
-            filename = basename + f"_FinalModel{ch_pick.capitalize()}"
+            if ch_pick == "all":
+                ch_pick = ch_pick.capitalize()
+            filename = str(Path(basename).parent / f"FinalModel{ch_pick}")
             self.decoder.save_model(filename)
 
     def _run_channel_pick(
@@ -342,6 +345,8 @@ class DecodingExperiment:
     ) -> None:
         """Train model and save results for given channel picks"""
         cols = self._pick_features(ch_pick)
+        if not cols:
+            return
         if self.verbose:
             print("No. of features used:", len(cols))
 
@@ -469,7 +474,9 @@ class DecodingExperiment:
     ) -> list[str]:
         """Return channel picks and types."""
         if "single_best" in self.channels_used:
-            ch_names = self._run_inner_cv(features, labels, groups)
+            ch_names = self._run_inner_cv(
+                features=features, labels=labels, groups=groups
+            )
         elif "all" in self.channels_used:
             ch_names = ["all"]
         else:
@@ -491,28 +498,33 @@ class DecodingExperiment:
                 features.iloc[train_ind, :],
                 features.iloc[test_ind, :],
             )
-            y_train, y_test = labels[train_ind], labels[test_ind]
-            groups_train = groups[train_ind]
+            y_train, y_test = labels.iloc[train_ind], labels.iloc[test_ind]
+            groups_train = groups.iloc[train_ind]
             for ch_name in self.ch_names:
                 cols = [
                     col for col in features_train.columns if ch_name in col
                 ]
-                data_train = features_train[cols, :].to_numpy()
-                data_test = features_test[cols, :].to_numpy()
-                y_pred = self.decoder.fit_and_predict(
+                if not cols:
+                    continue
+                data_train = features_train.loc[:, cols]
+                data_test = features_test.loc[:, cols]
+                self.decoder.fit(
                     data_train=data_train,
-                    data_test=data_test,
                     labels=y_train,
                     groups=groups_train,
                 )
+                y_pred = self.decoder.predict(
+                    data=data_test,
+                )
                 accuracy = balanced_accuracy_score(y_test, y_pred)
                 results[ch_name].append(accuracy)
+        results = {key: value for key, value in results.items() if value}
         results = {
             ch_name: np.mean(scores) for ch_name, scores in results.items()
         }
         best_channel: str = sorted(
             results.items(), key=lambda x: x[1], reverse=True
-        )[0]
+        )[0][0]
         return [best_channel]
 
     def _predict_epochs(

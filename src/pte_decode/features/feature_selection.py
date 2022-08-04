@@ -8,7 +8,7 @@ import pandas as pd
 
 @dataclass
 class FeatureSelector:
-    """Select features."""
+    """Select features based on keywords."""
 
     feature_keywords: Sequence[str] | None
     verbose: bool = False

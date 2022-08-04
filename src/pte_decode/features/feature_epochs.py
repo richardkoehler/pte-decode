@@ -206,20 +206,17 @@ def _events_from_label(
     data: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Create array of events from given label data."""
-    label_diff = np.zeros_like(data, dtype=int)
-    label_diff[1:] = np.diff(data)
-    if data[0] != 0:
-        label_diff[0] = 1
+    label_diff = np.diff(data, prepend=[0])
     if data[-1] != 0:
         label_diff[-1] = -1
     trials = np.nonzero(label_diff)[0]
+    # Check for plausability of events
+    if len(trials) % 2:
+        raise ValueError(
+            "Number of events found is odd. Please check your label data."
+        )
     trial_onsets = trials[::2]
     trial_ends = trials[1::2]
-    # Check for plausability of events
-    if len(trial_onsets) != len(trial_ends):
-        raise ValueError(
-            "Number of found events is odd Please check your label data."
-        )
     return trial_onsets, trial_ends
 
 
@@ -337,7 +334,7 @@ def _get_features_concatenated(
     ) = ([], [], [], [], [], [], [])
 
     for trial_id, (trial_onset, trial_end) in enumerate(
-        zip(trial_onsets, trial_ends)
+        zip(trial_onsets, trial_ends, strict=True)
     ):
         baseline_period = _get_baseline_period(
             trial_onset=trial_onset,
