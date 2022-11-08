@@ -1,11 +1,12 @@
 """Module for extracting event-based features for decoding."""
-from dataclasses import dataclass
 import gzip
-from pathlib import Path
 import pickle
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 
 
@@ -70,10 +71,10 @@ class FeatureEpochs:
         if out_path:
             out_path = str(Path(out_path).resolve())
             features_concatenated.to_csv(
-                out_path + "_FeaturesConcatenated.csv.gz", index=False
+                out_path + r"/FeaturesConcatenated.csv.gz", index=False
             )
             with gzip.open(
-                out_path + "_FeaturesTimelocked.pickle.gz", "wb"
+                out_path + r"/FeaturesTimelocked.pickle.gz", "wb"
             ) as file:
                 pickle.dump(features_timelocked, file)
 
@@ -148,7 +149,7 @@ def _get_prediction_epochs(
     trial_id: int,
     ind_begin: int,
     ind_end: int,
-    dtype: Any = np.float32,
+    dtype: npt.DTypeLike = np.float32,
     verbose: bool = False,
 ) -> np.ndarray:
     """Get epochs of data for making predictions."""

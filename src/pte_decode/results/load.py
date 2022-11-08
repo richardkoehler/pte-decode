@@ -160,6 +160,8 @@ def load_predictions(
     baseline: tuple[int | float | None, int | float | None] | None = None,
     baseline_mode: str = "zscore",
     baseline_trialwise: bool = False,
+    tmin: int | float | None = None,
+    tmax: int | float | None = None,
     average_predictions: bool = False,
     concatenate_runs: bool = True,
     average_runs: bool = False,
@@ -176,6 +178,8 @@ def load_predictions(
             baseline=baseline,
             baseline_mode=baseline_mode,
             baseline_trialwise=baseline_trialwise,
+            tmin=tmin,
+            tmax=tmax,
         )
         if average_predictions:
             data_single["Predictions"] = (
@@ -212,6 +216,8 @@ def load_predictions_singlefile(
     | None = (None, None),
     baseline_mode: str = "zscore",
     baseline_trialwise: bool = False,
+    tmin: int | float | None = None,
+    tmax: int | float | None = None,
 ) -> pd.DataFrame:
     """Load time-locked predictions from single file."""
     sub, med, stim = pte.filetools.sub_med_stim_from_fname(fpath)
@@ -232,6 +238,12 @@ def load_predictions_singlefile(
             baseline_trialwise=baseline_trialwise,
         )
 
+
+    if any((tmin is not None, tmax is not None)):
+        predictions, times = _crop(
+            preds=predictions, times=times, tmin=tmin, tmax=tmax
+        )
+
     data_final = pd.DataFrame(
         data=(
             (
@@ -239,7 +251,7 @@ def load_predictions_singlefile(
                 med,
                 stim,
                 pred_data["trial_ids"],
-                pred_data["times"],
+                times,
                 predictions,
             ),
         ),
@@ -253,3 +265,19 @@ def load_predictions_singlefile(
         ],
     )
     return data_final
+
+def _crop(
+    preds: np.ndarray,
+    times: np.ndarray,
+    tmin: int | float | None = None,
+    tmax: int | float | None = None,
+):
+    if tmin is not None:
+        idx_tmin = tmin <= times
+        times = times[idx_tmin]
+        preds = preds[..., idx_tmin]
+    if tmax is not None:
+        idx_tmax = times <= tmax
+        times = times[idx_tmax]
+        preds = preds[..., idx_tmax]
+    return preds, times

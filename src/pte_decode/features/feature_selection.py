@@ -24,7 +24,7 @@ class FeatureSelector:
             out_path = str(Path(out_path).resolve())
 
             feature_picks.to_csv(
-                out_path + "_FeaturesSelected.csv.gz", index=False
+                out_path + r"/FeaturesSelected.csv.gz", index=False
             )
 
         return feature_picks

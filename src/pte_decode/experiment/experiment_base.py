@@ -16,10 +16,10 @@ from sklearn.model_selection import BaseCrossValidator, GroupKFold
 class _Results:
     """Class for storing results of a single experiment."""
 
-    ch_names: list[str]
     use_channels: str
     save_importances: bool
     times_epochs: list[int] | list[float]
+    ch_names: list[str] | None = None
     scores: list = field(init=False, default_factory=list)
     predictions_epochs: dict = field(init=False, default_factory=dict)
     predictions_concat: dict = field(init=False, default_factory=dict)
@@ -50,6 +50,11 @@ class _Results:
             "trial_ids": [],
         }
         if self.use_channels == "single":
+            if self.ch_names is None:
+                raise ValueError(
+                    "If use_channels is 'single', ch_names must not be"
+                    " provided."
+                )
             epochs.update({ch: [] for ch in self.ch_names})
         else:
             epochs.update({"predictions": []})
@@ -161,17 +166,17 @@ class _Results:
             ],
             index=None,
         )
-        scores_df.to_csv(self.path + "_Scores.csv", index=False)
+        scores_df.to_csv(self.path + r"/Scores.csv", index=False)
 
     def save_predictions_concatenated(self) -> None:
         """Save concatenated predictions"""
         pd.DataFrame(self.predictions_concat).to_csv(
-            self.path + "_PredConcatenated.csv", index=False
+            self.path + r"/PredConcatenated.csv", index=False
         )
 
     def save_predictions_timelocked(self) -> None:
         """Save predictions time-locked to trial onset"""
-        with open(self.path + "_PredTimelocked.pickle", "wb") as file:
+        with open(self.path + r"/PredTimelocked.pickle", "wb") as file:
             pickle.dump(
                 self.predictions_epochs, file, protocol=pickle.HIGHEST_PROTOCOL
             )
@@ -192,7 +197,7 @@ class _Results:
                 "feature_importance",
             ],
             index=None,
-        ).to_csv(self.path + "_FeatImportances.csv", index=False)
+        ).to_csv(self.path + r"/FeatImportances.csv", index=False)
 
 
 @dataclass
@@ -200,19 +205,19 @@ class DecodingExperiment:
     """Class for running decoding experiments."""
 
     features: pd.DataFrame
-    features_timelocked: dict
+    features_timelocked: dict[str, list[list[float]]]
+    trial_ids_timelocked: Sequence[int]
     times_timelocked: list[int] | list[float]
     labels: pd.Series
     trial_ids: pd.Series
-    plotting_data: pd.Series
-    ch_names: list[str]
     decoder: pte_decode.Decoder
+    ch_names: list[str] | None = None
     scoring: str = "balanced_accuracy"
     feature_importance: Any = False
     channels_used: str = "single"
     prediction_mode: str = "classify"
-    cv_outer: BaseCrossValidator | None = GroupKFold(n_splits=5)
-    cv_inner: BaseCrossValidator | None = GroupKFold(n_splits=5)
+    cv_outer: BaseCrossValidator = GroupKFold(n_splits=5)
+    cv_inner: BaseCrossValidator = GroupKFold(n_splits=5)
     verbose: bool = False
     data_epochs: np.ndarray = field(init=False)
     fold: int = field(init=False)
@@ -227,10 +232,18 @@ class DecodingExperiment:
     def run(self) -> None:
         """Calculate classification performance and out results."""
         # Outer cross-validation
+        split = tuple(self.cv_outer.split(
+            self.features, self.labels, self.trial_ids
+        ))
+        if self.verbose:
+            no_splits = len(tuple(split))
         for train_ind, test_ind in self.cv_outer.split(
             self.features, self.labels, self.trial_ids
         ):
+            if self.verbose:
+                print(f"Fold no.: {self.fold + 1}/{no_splits}")
             self._run_outer_cv(train_ind=train_ind, test_ind=test_ind)
+            self.fold += 1
 
     def save(
         self,
@@ -273,9 +286,6 @@ class DecodingExperiment:
         self, train_ind: np.ndarray, test_ind: np.ndarray
     ) -> None:
         """Run single outer cross-validation fold."""
-        if self.verbose:
-            print(f"Fold no.: {self.fold}")
-
         # Get training and testing data and labels
         features_train, features_test = (
             pd.DataFrame(self.features.iloc[train_ind]),
@@ -306,7 +316,6 @@ class DecodingExperiment:
                 groups_test=groups_test,
                 trial_ids_test=trial_ids_test,
             )
-        self.fold += 1
 
     def _save_final_model(self, basename: str) -> None:
         # Handle which channels are used
@@ -319,8 +328,6 @@ class DecodingExperiment:
             cols = self._pick_features(ch_pick)
             if not cols:
                 continue
-            if self.verbose:
-                print("No. of features used:", len(cols))
             data_train = self.features[cols]
             self.decoder.fit(
                 data_train=data_train,
@@ -347,8 +354,8 @@ class DecodingExperiment:
         cols = self._pick_features(ch_pick)
         if not cols:
             return
-        if self.verbose:
-            print("No. of features used:", len(cols))
+        # if self.verbose:
+        #     print("No. of features used:", len(cols))
 
         data_train, data_test = features_train[cols], features_test[cols]
 
@@ -390,19 +397,38 @@ class DecodingExperiment:
                 feature_importances=feature_importances,
             )
 
-    def _get_prediction_epochs(self, columns, trial_ids) -> list[list]:
+    def _get_prediction_epochs(self, columns, trial_ids) -> list[list[float]] | None:
         """Get feature and prediction epochs."""
         feature_epochs = self._get_feature_epochs(
             features_used=columns,
             trial_ids=trial_ids,
         )
         if feature_epochs.size == 0:
-            return []
+            return None
         prediction_epochs = self._predict_epochs(
             data=feature_epochs,
             columns=columns,
         )
         return prediction_epochs
+
+    def _get_feature_epochs(
+        self,
+        features_used: list[str],
+        trial_ids: np.ndarray,
+    ) -> np.ndarray:
+        """Get epochs of data for making predictions."""
+        feat_timelock = self.features_timelocked
+        trials_timelock = self.trial_ids_timelocked
+        epochs = []
+        for trial in trial_ids:
+            if trial in trials_timelock:
+                ind = trials_timelock.index(trial)
+                epoch = [feat_timelock[feat][ind] for feat in features_used]
+                epochs.append(np.stack(epoch, axis=1))
+        if not epochs:
+            return np.atleast_1d([])
+        epochs = np.stack(epochs, axis=0)
+        return epochs
 
     def _pick_features(
         self,
@@ -418,25 +444,6 @@ class DecodingExperiment:
                     col_picks.append(column)
         return col_picks
 
-    def _get_feature_epochs(
-        self,
-        features_used: list[str],
-        trial_ids: np.ndarray,
-    ) -> np.ndarray:
-        """Get epochs of data for making predictions."""
-        feat_timelock = self.features_timelocked["features"]
-        trials_timelock = self.features_timelocked["trial_ids"]
-        epochs = []
-        for trial in trial_ids:
-            if trial in trials_timelock:
-                ind = trials_timelock.index(trial)
-                epoch = [feat_timelock[feat][ind] for feat in features_used]
-                epochs.append(np.stack(epoch, axis=1))
-        if not epochs:
-            return np.atleast_1d([])
-        epochs = np.stack(epochs, axis=0)
-        return epochs
-
     def _update_results(
         self,
         ch_pick: str,
@@ -445,7 +452,7 @@ class DecodingExperiment:
         predictions: np.ndarray,
         labels: np.ndarray,
         groups: np.ndarray,
-        prediction_epochs: list[list],
+        prediction_epochs: list[list[float]] | None,
     ) -> None:
         """Update results."""
         self.results.update_scores(
@@ -462,7 +469,7 @@ class DecodingExperiment:
             ch_pick=ch_pick,
         )
 
-        if prediction_epochs:
+        if prediction_epochs is not None:
             self.results.update_predictions_epochs(
                 data=prediction_epochs,
                 ch_pick=ch_pick,
@@ -531,7 +538,7 @@ class DecodingExperiment:
         self,
         data: np.ndarray,
         columns: list | None,
-    ) -> list[list]:
+    ) -> list[list[float]]:
         """Make predictions for given feature epochs."""
         mode = self.prediction_mode
         predictions = []

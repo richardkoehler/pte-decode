@@ -52,10 +52,10 @@ class FeatureCleaner:
             out_path = str(Path(out_path).resolve())
 
             feature_picks.to_csv(
-                out_path + "_FeaturesCleaned.csv.gz", index=False
+                out_path + r"/FeaturesCleaned.csv.gz", index=False
             )
-            label.to_csv(out_path + "_Label.csv.gz", index=False)
-            label.to_csv(out_path + "_PlottingTarget.csv.gz", index=False)
+            label.to_csv(out_path + r"/Label.csv.gz", index=False)
+            label.to_csv(out_path + r"/PlottingTarget.csv.gz", index=False)
 
         return feature_picks, label, plotting_target
 

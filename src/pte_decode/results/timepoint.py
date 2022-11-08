@@ -14,7 +14,7 @@ def get_earliest_timepoint(
     min_cluster_size: int = 1,
     resample_trials: int | None = None,
     verbose: bool = False,
-) -> int | float | None:
+) -> tuple[int | float | None, int]:
     """Get earliest timepoint of motor onset prediction."""
     if verbose:
         print("Calculating earliest significant timepoint...")
@@ -30,7 +30,7 @@ def get_earliest_timepoint(
             data = downsample_trials(data=data, n_samples=resample_trials)
         elif orig_trials < resample_trials:
             data = upsample_trials(data=data, n_samples=resample_trials)
-
+    trials_used = data.shape[0]
     # For compatibility of different methods
     data_t = data.T
 
@@ -48,7 +48,7 @@ def get_earliest_timepoint(
             min_cluster_size=min_cluster_size,
         )
         if len(clusters_ind) == 0:
-            return
+            return None, trials_used
         cluster_count = len(clusters_ind)
         clusters = np.zeros(data.shape[1], dtype=np.int32)
         for ind in clusters_ind:
@@ -73,10 +73,10 @@ def get_earliest_timepoint(
     if cluster_count == 0:
         if verbose:
             print("No significant clusters found.")
-        return
+        return None, trials_used
 
     index = np.where(clusters != 0)[0][0]
-    return times[index]
+    return times[index], trials_used
 
 
 def downsample_trials(data: np.ndarray, n_samples: int) -> np.ndarray:

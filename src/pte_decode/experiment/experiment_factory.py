@@ -4,6 +4,7 @@ from typing import Sequence
 
 import mne_bids
 import pandas as pd
+import pte
 import pte_decode
 from joblib import Parallel, delayed
 from sklearn.model_selection import BaseCrossValidator
@@ -40,7 +41,7 @@ def run_pipeline(
     target_begin: str | int | float,
     target_end: str | int | float,
     pipeline_steps: list[str] = ["clean", "engineer", "select", "decode"],
-    features: pd.DataFrame | None = None,
+    # features: pd.DataFrame | None = None,
     classifier: str = "lda",
     optimize: bool = False,
     balancing: str | None = None,
@@ -50,7 +51,7 @@ def run_pipeline(
     hemispheres_used: str = "both",
     scoring: str = "balanced_accuracy",
     bad_epochs_path: Path | str | None = None,
-    pred_mode: str = "classify",
+    prediction_mode: str = "classify",
     pred_begin: int | float = -3.0,
     pred_end: int | float = 2.0,
     use_times: int = 1,
@@ -65,22 +66,21 @@ def run_pipeline(
     **kwargs,
 ) -> None:
     """Run experiment with single file."""
+    filename = Path(filename)
     print(f"Using file: {filename}")
-    if features is None:
-        if str(filename).endswith("_FEATURES.csv"):
-            filename = str(filename)[:-13]
-            features, ch_names, ch_types, sfreq = load_pynm_features(
-                feature_root, filename
-            )
-        else:
-            raise ValueError(
-                "Feature file must end with '_FEATURES.csv'. Got:"
-                f"{filename}"
-            )
-    filename = str(Path(filename).with_suffix("").name)
+    if not filename.name.endswith("_FEATURES.csv"):
+        raise ValueError(
+            f"Feature file must end with '_FEATURES.csv'. Got: {filename}"
+        )
+    filename = filename.name.removesuffix("_FEATURES.csv")
+    features, ch_names, ch_types, sfreq = load_pynm_features(
+        feature_root, filename
+    )
+    sfreq = int(sfreq)
     if side == "auto":
         side = _get_trial_side(fname=filename)
 
+    file_suffix = ""
     if "clean" in pipeline_steps:
         outpath_feat_clean, file_suffix = _outpath_feat_clean(
             root=out_root,
@@ -88,7 +88,6 @@ def run_pipeline(
             types_used=types_used,
             hemispheres_used=hemispheres_used,
         )
-        # Clean features
         features, label, plotting_target = pte_decode.FeatureCleaner(
             data_channel_names=ch_names,
             data_channel_types=ch_types,
@@ -100,7 +99,6 @@ def run_pipeline(
         ).run(features=features, out_path=outpath_feat_clean)
 
     if "engineer" in pipeline_steps:
-        # Engineer features
         outpath_feat_eng, file_suffix = _outpath_feat_eng(
             root=out_root,
             fname=filename,
@@ -114,7 +112,6 @@ def run_pipeline(
         ).run(features, out_path=outpath_feat_eng)
 
     if "select" in pipeline_steps:
-        # Select features
         outpath_feat_sel, file_suffix = _outpath_feat_sel(
             root=out_root,
             fname=filename,
@@ -125,12 +122,11 @@ def run_pipeline(
         ).run(features, out_path=outpath_feat_sel)
 
     # Handle bad events file
-    import pte  # pylint: disable=import-outside-toplevel
-
-    bad_epochs_df = pte.filetools.get_bad_epochs(
-        bad_epochs_dir=bad_epochs_path, filename=filename
-    )
-    bad_epochs = bad_epochs_df.event_id.to_numpy()
+    bad_epochs = None
+    if bad_epochs_path is not None:
+        bad_epochs = pte.filetools.get_bad_epochs(
+            bad_epochs_dir=bad_epochs_path, filename=filename
+        )["event_id"].to_numpy()
 
     # Handle exception files
     dist_end = _handle_exception_files(
@@ -175,14 +171,14 @@ def run_pipeline(
         )
 
         # Generate output file name
-        outpath_predict, file_suffix = _outpath_predict(
+        outpath_pred, file_suffix = outpath_predict(
             root=out_root,
             fname=filename,
             suffix=file_suffix,
             classifier=classifier,
             optimize=optimize,
         )
-        outpath_predict.parent.mkdir(exist_ok=True, parents=True)
+        outpath_pred.parent.mkdir(exist_ok=True, parents=True)
 
         decoder = pte_decode.get_decoder(
             classifier=classifier,
@@ -193,24 +189,24 @@ def run_pipeline(
         # Initialize Experiment instance
         experiment = pte_decode.DecodingExperiment(
             features=features_concat,
-            features_timelocked=features_timelocked,
+            features_timelocked=features_timelocked["features"],
+            trial_ids_timelocked=features_timelocked["trial_ids"],
             times_timelocked=features_timelocked["time"],
             labels=label_concat,
             trial_ids=trial_ids,
-            plotting_data=plotting_target,
             ch_names=ch_names,
             decoder=decoder,
             scoring=scoring,
             feature_importance=feature_importance,
             channels_used=channels_used,
-            prediction_mode=pred_mode,
+            prediction_mode=prediction_mode,
             cv_outer=cross_validation,
             verbose=verbose,
             **kwargs,
         )
         experiment.run()
         experiment.save(
-            path=outpath_predict,
+            path=outpath_pred,
             scores=True,
             predictions_concatenated=True,
             predictions_timelocked=True,
@@ -248,7 +244,7 @@ def _handle_exception_files(
     dist_end: int | float,
     excep_dist_end: int | float,
     exception_keywords: Sequence[str] | None = None,
-):
+) -> int | float:
     """Check if current file is listed in exception files."""
     if exception_keywords:
         if any(keyw in str(fname) for keyw in exception_keywords):
@@ -266,12 +262,12 @@ def _outpath_feat_clean(
     """Generate file name for output files."""
     if isinstance(types_used, str):
         types_used = [types_used]
-    type_str = "_".join(("chs", *(_type for _type in types_used)))
+    type_str = "_".join(("chs", *(type_ for type_ in types_used)))
     side_str = f"hem_{hemispheres_used}"
     dir_name = "_".join((type_str, side_str))
 
-    out_path = Path(root, "12_features_cleaned", dir_name, fname, fname)
-    out_path.parent.mkdir(exist_ok=True, parents=True)
+    out_path = Path(root, "12_features_cleaned", dir_name, fname)
+    out_path.mkdir(exist_ok=True, parents=True)
     return out_path, dir_name
 
 
@@ -285,8 +281,8 @@ def _outpath_feat_eng(
     feat_str = f"{use_times * 100}ms"
     dir_name = "_".join((feat_str, suffix))
 
-    out_path = Path(root, "14_features_engineered", dir_name, fname, fname)
-    out_path.parent.mkdir(exist_ok=True, parents=True)
+    out_path = Path(root, "14_features_engineered", dir_name, fname)
+    out_path.mkdir(exist_ok=True, parents=True)
     return out_path, dir_name
 
 
@@ -297,8 +293,8 @@ def _outpath_feat_sel(
 ) -> tuple[Path, str]:
     """Generate file name for output files."""
     dir_name = "_".join((suffix,))
-    out_path = Path(root, "16_features_selected", dir_name, fname, fname)
-    out_path.parent.mkdir(exist_ok=True, parents=True)
+    out_path = Path(root, "16_features_selected", dir_name, fname)
+    out_path.mkdir(exist_ok=True, parents=True)
     return out_path, dir_name
 
 
@@ -318,12 +314,12 @@ def _outpath_feat_epochs(
     target_str = f"{target_begin}_{target_end}"
     dir_name = "_".join((target_str, suffix))
 
-    out_path = Path(root, "18_features_epochs", dir_name, fname, fname)
-    out_path.parent.mkdir(exist_ok=True, parents=True)
+    out_path = Path(root, "18_features_epochs", dir_name, fname)
+    out_path.mkdir(exist_ok=True, parents=True)
     return out_path, dir_name
 
 
-def _outpath_predict(
+def outpath_predict(
     root: Path | str,
     fname: Path | str,
     suffix: str,
@@ -335,8 +331,8 @@ def _outpath_predict(
     opt_str = "opt_yes" if optimize else "opt_no"
     dir_name = "_".join((clf_str, opt_str, suffix))
 
-    out_path = Path(root, "20_predict", dir_name, fname, fname)
-    out_path.parent.mkdir(exist_ok=True, parents=True)
+    out_path = Path(root, "20_predict", dir_name, fname)
+    out_path.mkdir(exist_ok=True, parents=True)
     return out_path, dir_name
 
 

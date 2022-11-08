@@ -28,7 +28,7 @@ class FeatureEngineer:
         if out_path:
             out_path = str(Path(out_path).resolve())
             features.to_csv(
-                out_path + "_FeaturesEngineered.csv.gz", index=False
+                out_path + r"/FeaturesEngineered.csv.gz", index=False
             )
 
         return features
