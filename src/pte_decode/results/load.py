@@ -12,17 +12,13 @@ import pte_stats
 
 
 def load_results_singlechannel(
-    files_or_dir: str | Path | list,
+    files: list[Path | str],
     scoring_key: str = "balanced_accuracy",
     average_runs: bool = False,
 ) -> pd.DataFrame:
     """Load results from *results.csv"""
-    # Create Dataframes from Files
-    files_or_dir = _handle_files_or_dir(
-        files_or_dir=files_or_dir, extensions="results.csv"
-    )
     results = []
-    for file in files_or_dir:
+    for file in files:
         subject = mne_bids.get_entities_from_fname(file, on_error="ignore")[
             "subject"
         ]
@@ -58,14 +54,15 @@ def load_results_singlechannel(
 
 def load_scores(
     files: str | Path | list,
-    average_runs: bool = True,
+    average_runs: bool = False,
 ) -> pd.DataFrame:
     """Load prediction scores from *Scores.csv"""
     if not isinstance(files, list):
         files = [files]
     results = []
     for file in files:
-        sub, med, stim = pte.filetools.sub_med_stim_from_fname(file)
+        parent_dir = Path(file).parent.name
+        sub, med, stim = pte.filetools.sub_med_stim_from_fname(parent_dir)
         data = (
             pd.read_csv(file)
             .drop(columns=["fold", "trial_ids"])
@@ -73,15 +70,16 @@ def load_scores(
             .mean()
             .reset_index()
         )
-        data["Filename"] = file
         data["Subject"] = sub
         data["Medication"] = med
         data["Stimulation"] = stim
+        data["Filename"] = parent_dir
         results.append(data)
     final = pd.concat(results)
     if average_runs:
         final = (
             final.groupby(["Subject", "Medication", "Stimulation", "channel"])
+            .drop(columns=["Filename"])
             .mean()
             .reset_index()
         )
@@ -95,22 +93,6 @@ def _normalize_columns(columns: list[str]) -> list[str]:
         for col in columns
     ]
     return new_columns
-
-
-def _handle_files_or_dir(
-    files_or_dir: str | Path | list,
-    extensions: str | list | None = None,
-) -> list:
-    """Handle different cases of files_or_dir."""
-    if isinstance(files_or_dir, list):
-        return files_or_dir
-    file_finder = pte.filetools.get_filefinder(datatype="any")
-    file_finder.find_files(
-        directory=files_or_dir,
-        extensions=extensions,
-        verbose=True,
-    )
-    return file_finder.files
 
 
 def _load_labels_single(
@@ -156,7 +138,7 @@ def _load_labels_single(
 
 
 def load_predictions(
-    files_or_dir: str | Path | list,
+    files: list[Path | str],
     baseline: tuple[int | float | None, int | float | None] | None = None,
     baseline_mode: str = "zscore",
     baseline_trialwise: bool = False,
@@ -167,14 +149,10 @@ def load_predictions(
     average_runs: bool = False,
 ) -> pd.DataFrame:
     """Load time-locked predictions."""
-    files_or_dir = _handle_files_or_dir(
-        files_or_dir=files_or_dir, extensions="PredTimelocked.pickle"
-    )
-
     df_list = []
-    for fpath in files_or_dir:
+    for file in files:
         data_single = load_predictions_singlefile(
-            fpath=fpath,
+            file=file,
             baseline=baseline,
             baseline_mode=baseline_mode,
             baseline_trialwise=baseline_trialwise,
@@ -200,7 +178,7 @@ def load_predictions(
     return data_all
 
 
-def _concatenate_runs(data: pd.DataFrame):
+def _concatenate_runs(data: pd.DataFrame) -> pd.DataFrame:
     """Concatenate predictions from different runs in a single patient."""
     data_list = []
     for subject in data["Subject"].unique():
@@ -211,7 +189,7 @@ def _concatenate_runs(data: pd.DataFrame):
 
 
 def load_predictions_singlefile(
-    fpath: str | Path,
+    file: str | Path,
     baseline: tuple[int | float | None, int | float | None]
     | None = (None, None),
     baseline_mode: str = "zscore",
@@ -220,8 +198,17 @@ def load_predictions_singlefile(
     tmax: int | float | None = None,
 ) -> pd.DataFrame:
     """Load time-locked predictions from single file."""
-    sub, med, stim = pte.filetools.sub_med_stim_from_fname(fpath)
-    with open(fpath, "rb") as file:
+    # parent_dir = Path(fpath).parent.name
+    parent_dir = Path(file).parent.name
+    items = parent_dir.split("_")
+    items_kept = []
+    for item in items:
+        if item in ("eeg", "ieeg"):
+            break
+        items_kept.append(item)
+    filename = "_".join(items_kept)
+    sub, med, stim = pte.filetools.sub_med_stim_from_fname(filename)
+    with open(file, "rb") as file:
         pred_data = pickle.load(file)
     predictions = np.stack(pred_data["predictions"], axis=0)
     times = np.array(pred_data["times"])
@@ -238,9 +225,8 @@ def load_predictions_singlefile(
             baseline_trialwise=baseline_trialwise,
         )
 
-
     if any((tmin is not None, tmax is not None)):
-        predictions, times = _crop(
+        predictions, times = _crop_predictions(
             preds=predictions, times=times, tmin=tmin, tmax=tmax
         )
 
@@ -253,6 +239,7 @@ def load_predictions_singlefile(
                 pred_data["trial_ids"],
                 times,
                 predictions,
+                filename,
             ),
         ),
         columns=[
@@ -262,16 +249,18 @@ def load_predictions_singlefile(
             "trial_ids",
             "times",
             "Predictions",
+            "filename",
         ],
     )
     return data_final
 
-def _crop(
+
+def _crop_predictions(
     preds: np.ndarray,
     times: np.ndarray,
     tmin: int | float | None = None,
     tmax: int | float | None = None,
-):
+) -> tuple[np.ndarray, np.ndarray]:
     if tmin is not None:
         idx_tmin = tmin <= times
         times = times[idx_tmin]

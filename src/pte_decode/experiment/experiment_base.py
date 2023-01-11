@@ -256,7 +256,7 @@ class DecodingExperiment:
     ) -> None:
         """Save results to given path."""
 
-        self.features["trial_ids"] = self.trial_ids
+        # self.features.loc[:, "trial_ids"] = self.trial_ids
         basename = self.results.set_path(path=path, verbose=self.verbose)
         if scores:
             self.results.save_scores(
@@ -291,9 +291,9 @@ class DecodingExperiment:
             pd.DataFrame(self.features.iloc[train_ind]),
             pd.DataFrame(self.features.iloc[test_ind]),
         )
-        y_train = self.labels[train_ind]
-        groups_train = self.trial_ids[train_ind]
-        groups_test = self.trial_ids[test_ind]
+        y_train = self.labels.iloc[train_ind]
+        groups_train = self.trial_ids.iloc[train_ind]
+        groups_test = self.trial_ids.iloc[test_ind]
 
         trial_ids_test = np.unique(groups_test)
 
@@ -311,7 +311,7 @@ class DecodingExperiment:
                 features_train=features_train,
                 features_test=features_test,
                 labels_train=y_train,
-                labels_test=self.labels[test_ind],
+                labels_test=self.labels.iloc[test_ind],
                 groups_train=groups_train,
                 groups_test=groups_test,
                 trial_ids_test=trial_ids_test,

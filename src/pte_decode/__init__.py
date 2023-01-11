@@ -21,6 +21,7 @@ from .plotting.plot import (
 )
 from .results.load import (
     load_predictions,
+    load_predictions_singlefile,
     load_scores,
     load_results_singlechannel,
 )

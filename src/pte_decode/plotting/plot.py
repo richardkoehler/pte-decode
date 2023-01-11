@@ -48,7 +48,7 @@ def violinplot_results(
         else:
             hue_factor = 1
         figsize = (1 + (1.1 * len(order) * hue_factor), 4.8)  # 0.9 for paper
-
+        # figsize = (0.9 * len(order) * hue_factor, 4.8)  # 0.9 for paper
 
     fig.set_figwidth(figsize[0])
     fig.set_figheight(figsize[1])
@@ -60,12 +60,14 @@ def violinplot_results(
         order=order,
         hue_order=hue_order,
         data=data,
+        color="black",
         # color="white", # for violinplot
         # alpha=0.6, # for violinplot
-        color="black", # for boxplot
-        alpha=0.9, # for boxplot
+        # alpha_palette="dark:black",  # for boxplot
+        # alpha_palette=alpha_palette,
+        alpha=0.9,  # for boxplot
         dodge=True,
-        # s=8,
+        s=7,
         ax=ax,
     )
 
@@ -91,6 +93,7 @@ def violinplot_results(
         data=data,
         width=0.5,
         ax=ax,
+        showfliers=False,
     )
 
     if stat_test:
@@ -248,7 +251,7 @@ def lineplot_prediction(
     y_lims: Sequence | None = None,
     compare_x1x2: bool = False,
     paired_x1x2: bool = False,
-    show_plot: bool = True,
+    show: bool = True,
 ) -> figure.Figure:
     """Plot averaged time-locked predictions including statistical tests."""
     colors = mpl.rcParams["axes.prop_cycle"].by_key()["color"]
@@ -333,7 +336,7 @@ def lineplot_prediction(
     fig.tight_layout()
     if outpath:
         fig.savefig(outpath, bbox_inches="tight")
-    if show_plot:
+    if show:
         plt.show(block=True)
     return fig
 
@@ -400,7 +403,7 @@ def _permutation_wrapper(x, y, n_perm) -> tuple:
         x = x.to_numpy()
     if isinstance(y, pd.Series):
         y = y.to_numpy()
-    return pte_stats.permutation_twosample(x=x, y=y, n_perm=n_perm)
+    return pte_stats.permutation_twosample(data_a=x, data_b=y, n_perm=n_perm)
 
 
 def _pval_correction_lineplot(
