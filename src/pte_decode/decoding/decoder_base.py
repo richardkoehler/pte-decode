@@ -2,7 +2,8 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Optional, Union
+from pathlib import Path
+from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
@@ -21,39 +22,64 @@ from sklearn.utils.class_weight import compute_sample_weight
 class Decoder(ABC):
     """Basic representation of class of machine learning decoders."""
 
-    scoring: Any
-    balancing: Optional[str] = "oversample"
+    scoring: Callable
+    balancing: str | None = "oversample"
     optimize: bool = False
     model: Any = field(init=False)
     data_train: pd.DataFrame = field(init=False)
-    labels_train: np.ndarray = field(init=False)
-    groups_train: Iterable = field(init=False)
+    labels_train: pd.Series = field(init=False)
+    groups_train: pd.Series = field(init=False)
 
     @abstractmethod
-    def fit(self, data: pd.DataFrame, labels: np.ndarray, groups) -> None:
+    def fit(
+        self,
+        data_train: pd.DataFrame,
+        labels: pd.Series,
+        groups: pd.Series,
+    ) -> None:
         """Fit model to given training data and training labels."""
 
-    def get_score(self, data_test: np.ndarray, label_test: np.ndarray):
+    @abstractmethod
+    def save_model(self, filename: Path | str) -> None:
+        """Save model to file"""
+
+    def get_score(
+        self,
+        data_test: np.ndarray | pd.DataFrame,
+        label_test: np.ndarray | pd.Series,
+    ):
         """Calculate score."""
         return self.scoring(self.model, data_test, label_test)
+
+    def predict(self, data: pd.DataFrame) -> np.ndarray:
+        """Predict."""
+        return self.model.predict(data)
+
+    def predict_proba(self, data: pd.DataFrame) -> np.ndarray:
+        """Predict probability."""
+        return self.model.predict_proba(data)
+
+    def decision_function(self, data: pd.DataFrame) -> np.ndarray:
+        """Calculate decision function."""
+        return self.model.decision_function(data)
 
     @staticmethod
     def _get_validation_split(
         data: pd.DataFrame,
-        labels: np.ndarray,
-        groups: np.ndarray,
+        labels: pd.Series,
+        groups: pd.Series,
         train_size: float = 0.8,
-    ) -> tuple[Union[pd.DataFrame, pd.Series], np.ndarray, list]:
+    ) -> tuple[pd.DataFrame, pd.Series, list]:
         """Split data into single training and validation set."""
         val_split = GroupShuffleSplit(n_splits=1, train_size=train_size)
         train_ind, val_ind = next(val_split.split(data, labels, groups))
         data_train, data_val = (
-            data.iloc[train_ind],
-            data.iloc[val_ind],
+            data.iloc[train_ind, :],
+            data.iloc[val_ind, :],
         )
         labels_train, labels_val = (
-            labels[train_ind],
-            labels[val_ind],
+            labels[train_ind, :],
+            labels[val_ind, :],
         )
         eval_set = [(data_val, labels_val)]
         return data_train, labels_train, eval_set

@@ -1,15 +1,15 @@
 """Module for plotting decoding results."""
-import os
 from itertools import combinations, product
 from pathlib import Path
-from typing import Callable, Iterable, Optional, Sequence, Union
+from typing import Callable, Iterable, Literal, Sequence
 
 import numpy as np
 import pandas as pd
 import seaborn as sns
+import matplotlib as mpl
 from matplotlib import axes, cm, collections, figure, patheffects
 from matplotlib import pyplot as plt
-from scipy import stats
+import scipy.stats
 from statannotations import Annotator
 from statannotations.stats import StatTest
 
@@ -19,44 +19,39 @@ import pte_stats
 
 def violinplot_results(
     data: pd.DataFrame,
-    outpath: Union[str, Path],
     x: str,
     y: str,
-    hue: Optional[str] = None,
-    order: Optional[Union[Sequence, np.ndarray]] = None,
-    hue_order: Optional[Union[Sequence, np.ndarray]] = None,
-    stat_test: Optional[Union[Callable, str]] = "Permutation",
+    outpath: str | Path | None = None,
+    hue: str | None = None,
+    order: Sequence | None = None,
+    hue_order: Sequence | None = None,
+    stat_test: str | Callable | None = "Permutation",
     alpha: float = 0.05,
-    add_lines: Optional[str] = None,
-    title: Optional[str] = "Classification Performance",
-    figsize: Union[tuple, str] = "auto",
-) -> None:
+    add_lines: str | None = None,
+    title: str | None = None,
+    figsize: tuple[float, float] | Literal["auto"] = "auto",
+    show: bool = True,
+) -> figure.Figure:
     """Plot performance as violinplot."""
     if order is None:
-        order = data[x].unique()
+        order = list(data[x].unique())
 
-    if hue and hue_order is None:
-        hue_order = data[hue].unique()
+    fig, ax = plt.subplots(nrows=1, ncols=1)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
 
     if figsize == "auto":
-        hue_factor = 1 if not hue else len(hue_order)
-        figsize = (1.1 * len(order) * hue_factor, 4)
+        if hue:
+            if hue_order is None:
+                hue_order = list(data[hue].unique())
+            hue_factor = len(hue_order)
+        else:
+            hue_factor = 1
+        figsize = (1 + (1.1 * len(order) * hue_factor), 4.8)  # 0.9 for paper
+        # figsize = (0.9 * len(order) * hue_factor, 4.8)  # 0.9 for paper
 
-    fig, ax = plt.subplots(nrows=1, ncols=1, figsize=figsize)
-
-    ax = sns.violinplot(
-        x=x,
-        y=y,
-        hue=hue,
-        order=order,
-        hue_order=hue_order,
-        data=data,
-        palette="viridis",
-        inner="box",
-        width=0.9,
-        alpha=0.8,
-        ax=ax,
-    )
+    fig.set_figwidth(figsize[0])
+    fig.set_figheight(figsize[1])
 
     ax = sns.swarmplot(
         x=x,
@@ -65,11 +60,40 @@ def violinplot_results(
         order=order,
         hue_order=hue_order,
         data=data,
-        color="white",
-        alpha=0.5,
+        color="black",
+        # color="white", # for violinplot
+        # alpha=0.6, # for violinplot
+        # alpha_palette="dark:black",  # for boxplot
+        # alpha_palette=alpha_palette,
+        alpha=0.9,  # for boxplot
         dodge=True,
-        s=6,
+        s=7,
         ax=ax,
+    )
+
+    # ax = sns.violinplot(
+    #     x=x,
+    #     y=y,
+    #     hue=hue,
+    #     order=order,
+    #     hue_order=hue_order,
+    #     data=data,
+    #     inner="box",
+    #     width=0.9,
+    #     alpha=1.0,
+    #     cut=0.2,
+    #     ax=ax,
+    # )
+    ax = sns.boxplot(
+        x=x,
+        y=y,
+        hue=hue,
+        order=order,
+        hue_order=hue_order,
+        data=data,
+        width=0.5,
+        ax=ax,
+        showfliers=False,
     )
 
     if stat_test:
@@ -104,7 +128,12 @@ def violinplot_results(
     xlabels = [item.get_text() for item in ax.get_xticklabels()]
     new_xlabels = [xtick.replace(" ", "\n") for xtick in xlabels]
     ax.set_xticklabels(new_xlabels)
-    ax.set_title(title, fontsize="medium", y=1.02)
+    if title is not None:
+        if stat_test:
+            y_coord = 1.15
+        else:
+            y_coord = 1.02
+        ax.set_title(title, y=y_coord)
 
     if add_lines:
         _add_lines(
@@ -112,125 +141,11 @@ def violinplot_results(
         )
 
     fig.tight_layout()
-    fig.savefig(outpath, bbox_inches="tight", dpi=450)
-    plt.show(block=True)
-
-
-def boxplot_results(
-    data: pd.DataFrame,
-    outpath: Union[str, Path],
-    x: str,
-    y: str,
-    hue: Optional[str] = None,
-    order: Optional[Iterable] = None,
-    hue_order: Optional[Iterable] = None,
-    stat_test: Optional[Union[Callable, str]] = "Permutation",
-    alpha: Optional[float] = 0.05,
-    add_lines: Optional[str] = None,
-    add_median_labels: bool = False,
-    title: Optional[str] = "Classification Performance",
-    figsize: Union[tuple, str] = "auto",
-) -> None:
-    """Plot performance as combined boxplot and stripplot."""
-    # data = data[["Channels", "Balanced Accuracy", "Subject"]]
-
-    color = "black"
-    alpha_box = 0.5
-
-    if not order:
-        order = data[x].unique()
-
-    if hue and not hue_order:
-        hue_order = data[hue].unique()
-
-    if figsize == "auto":
-        hue_factor = 1 if not hue else len(hue_order)
-        figsize = (1.1 * len(order) * hue_factor, 4)
-
-    plt.figure(figsize=figsize)
-
-    ax = sns.boxplot(
-        x=x,
-        y=y,
-        hue=hue,
-        order=order,
-        hue_order=hue_order,
-        data=data,
-        palette="viridis",
-        boxprops=dict(alpha=alpha_box),
-        showcaps=True,
-        showbox=True,
-        showfliers=False,
-        notch=False,
-        width=0.9,
-        whiskerprops={
-            "linewidth": 2,
-            "zorder": 10,
-            "alpha": alpha_box,
-            "color": color,
-        },
-        capprops={"alpha": alpha_box, "color": color},
-        medianprops=dict(
-            linestyle="-", linewidth=5, color=color, alpha=alpha_box
-        ),
-    )
-
-    if add_median_labels:
-        _add_median_labels(ax)
-
-    sns.swarmplot(
-        x=x,
-        y=y,
-        hue=hue,
-        order=order,
-        hue_order=hue_order,
-        data=data,
-        palette="viridis",
-        dodge=True,
-        s=6,
-        ax=ax,
-    )
-
-    if hue:
-        handles, labels = ax.get_legend_handles_labels()
-        new_labels = [
-            label.replace(" ", "\n") for label in labels[: len(labels) // 2]
-        ]
-        _ = plt.legend(
-            handles[: len(handles) // 2],
-            new_labels,
-            bbox_to_anchor=(1.02, 1),
-            loc=2,
-            borderaxespad=0.0,
-            title=hue,
-            labelspacing=0.7,
-        )
-
-    xlabels = [item.get_text() for item in ax.get_xticklabels()]
-    new_xlabels = [xtick.replace(" ", "\n") for xtick in xlabels]
-    ax.set_xticklabels(new_xlabels)
-    ax.set_title(title, fontsize="medium", y=1.02)
-
-    if add_lines:
-        _add_lines(
-            ax=ax, data=data, x=x, y=y, order=order, add_lines=add_lines
-        )
-
-    if stat_test:
-        _add_stats(
-            ax,
-            data,
-            x,
-            y,
-            order,
-            hue,
-            hue_order,
-            stat_test=stat_test,
-            alpha=alpha,
-        )
-    plt.tight_layout()
-    plt.savefig(outpath, bbox_inches="tight", dpi=450)
-    plt.show(block=True)
+    if outpath is not None:
+        fig.savefig(str(outpath), bbox_inches="tight")
+    if show:
+        plt.show(block=True)
+    return fig
 
 
 def _add_lines(
@@ -238,9 +153,9 @@ def _add_lines(
     data: pd.DataFrame,
     x: str,
     y: str,
-    order: list[str],
+    order: Iterable[str],
     add_lines: str,
-):
+) -> None:
     """Add lines connecting single dots"""
     data = data.sort_values(  # type: ignore
         by=x, key=lambda k: k.map({item: i for i, item in enumerate(order)})
@@ -260,12 +175,12 @@ def _add_stats(
     x: str,
     y: str,
     order: Iterable,
-    hue: Optional[str],
-    hue_order: Optional[Iterable],
-    stat_test: Union[str, StatTest.StatTest],
+    hue: str | None,
+    hue_order: Iterable | None,
+    stat_test: str | StatTest.StatTest,
     alpha: float,
     location: str = "inside",
-):
+) -> None:
     """Perform statistical test and annotate graph."""
     if not hue:
         pairs = list(combinations(order, 2))
@@ -294,45 +209,55 @@ def _add_stats(
         hue=hue,
         hue_order=hue_order,
         order=order,
+        plot="violinplot",
     )
     annotator.configure(
         alpha=alpha,
         test=stat_test,
         text_format="simple",
-        show_test_name=False,
         loc=location,
         color="grey",
+        pvalue_format={
+            "pvalue_thresholds": [
+                [1e-6, "0.000001"],
+                [1e-5, "0.00001"],
+                [1e-4, "0.0001"],
+                [1e-3, "0.001"],
+                [1e-2, "0.01"],
+                [5e-2, "0.05"],
+            ],
+            "fontsize": 13,
+            "text_format": "simple",
+            "pvalue_format_string": "{:.3f}",
+            "show_test_name": False,
+        },
     )
     annotator.apply_and_annotate()
 
 
 def lineplot_prediction(
-    x: np.ndarray,
-    subpl_titles: Iterable,
-    sfreq: Union[int, float],
-    x_lims: tuple,
-    y: Optional[np.ndarray] = None,
-    outpath: Optional[Union[Path, str]] = None,
-    title: Optional[str] = None,
-    label: Optional[str] = "Distance from Hyperplane",
-    y_label: str = None,
-    threshold: Union[
-        int, float, tuple[Union[int, float], Union[int, float]]
-    ] = (0.0, 1.0),
-    p_lim: float = 0.05,
+    x_1: np.ndarray,
+    times: np.ndarray,
+    data_labels: Sequence,
+    x_2: np.ndarray | None = None,
+    outpath: Path | str | None = None,
+    x_label: str = "Time (s)",
+    y_label: str | None = None,
+    threshold: int | float | tuple[int | float, int | float] = (0.0, 1.0),
+    alpha: float = 0.05,
     n_perm: int = 1000,
     correction_method: str = "cluster",
     two_tailed: bool = False,
-    ylims=None,
-    compare_xy: bool = False,
-    show_plot: bool = True,
+    y_lims: Sequence | None = None,
+    compare_x1x2: bool = False,
+    paired_x1x2: bool = False,
+    show: bool = True,
 ) -> figure.Figure:
     """Plot averaged time-locked predictions including statistical tests."""
-    viridis = cm.get_cmap("viridis", 8)
-    colors = viridis(4), viridis(2)
+    colors = mpl.rcParams["axes.prop_cycle"].by_key()["color"]
 
-    if y is not None:
-        if compare_xy:
+    if x_2 is not None:
+        if compare_x1x2:
             nrows = 3
         else:
             nrows = 2
@@ -340,90 +265,135 @@ def lineplot_prediction(
         nrows = 1
 
     fig, axs = plt.subplots(
-        ncols=1, nrows=nrows, figsize=(6, 2.0 * nrows), sharey=True
+        ncols=1,
+        nrows=nrows,
+        figsize=(5.6, 4.8),
+        sharex=True,
+        sharey=True,
     )
-    if y is None:
-        # for compatibility
+    if x_2 is None:
         axs = [axs]
 
-    n_samples = x.shape[0]
-
-    for i, data in enumerate((x, y)):
+    for i, data in enumerate((x_1, x_2)):
         if data is not None:
             lineplot_prediction_single(
                 data=data,
+                times=times,
                 ax=axs[i],
+                label=data_labels[i],
                 threshold=threshold,
-                sfreq=sfreq,
-                x_lims=x_lims,
                 color=colors[i],
-                subpl_title=subpl_titles[i],
-                label=label,
-                p_lim=p_lim,
+                subplot_title=data_labels[i],
+                alpha=alpha,
                 n_perm=n_perm,
                 correction_method=correction_method,
                 two_tailed=two_tailed,
             )
 
-    if compare_xy:
-        if y is None:
+    if compare_x1x2:
+        if x_2 is None:
             raise ValueError(
-                "if `compare_xy` is `True`, `y` must not be" " `None`."
+                "If `compare_x1x2` is `True`, data for `x2` must be provided."
             )
-        for i, data in enumerate([x, y]):
-            label_ = (
-                " - ".join((subpl_titles[i], label))
-                if label
-                else subpl_titles[i]
-            )
+        for i, data in enumerate([x_1, x_2]):
             axs[2].plot(
+                times,
                 data.mean(axis=1),
                 color=colors[i],
-                label=label_,
+                label=data_labels[i],
             )
             axs[2].fill_between(
-                np.arange(data.shape[0]),
-                data.mean(axis=1) - stats.sem(data, axis=1),
-                data.mean(axis=1) + stats.sem(data, axis=1),
+                times,
+                data.mean(axis=1) - scipy.stats.sem(data, axis=1),
+                data.mean(axis=1) + scipy.stats.sem(data, axis=1),
                 alpha=0.5,
                 color=colors[i],
             )
-        axs[2].set_title(
-            f"{subpl_titles[0]} vs. {subpl_titles[1]}", fontsize="medium"
-        )
-        axs[2].set_xlabel("Time [s]")
-
-        p_vals = pte_stats.timeseries_pvals(
-            x=x, y=y, n_perm=n_perm, two_tailed=two_tailed
-        )
+        axs[2].set_title(f"{data_labels[0]} vs. {data_labels[1]}")
 
         _pval_correction_lineplot(
             ax=axs[2],
-            x=x,
-            y=y,
-            x_lims=x_lims,
-            p_vals=p_vals,
-            alpha=p_lim,
+            x=x_1,
+            y=x_2,
+            times=times,
+            alpha=alpha,
             n_perm=n_perm,
             correction_method=correction_method,
+            two_tailed=two_tailed,
+            min_cluster_size=2,
+            onesample_xy=paired_x1x2,
         )
 
-    for ax in axs:
-        ax.legend(loc="upper left", fontsize="small")
-        if ylims:
-            ax.set_ylim(ylims[0], ylims[1])
-        xticks = np.arange(0, n_samples, sfreq)
-        ax.set_xticks(xticks)
-        ax.set_xticklabels(np.linspace(x_lims[0], x_lims[1], len(xticks)))
-        ax.set_ylabel(y_label)
-        ax.set_xlabel("Time (s)")
+    axs[-1].set_xlabel(x_label)
 
-    fig.suptitle(title, fontsize="large", y=1.01)
+    for ax in axs:
+        ax.legend(loc="upper left", bbox_to_anchor=(1.0, 1.05))
+        if y_lims:
+            ax.set_ylim(y_lims[0], y_lims[1])
+
+        ax.set_ylabel(y_label)
+
     fig.tight_layout()
     if outpath:
-        fig.savefig(os.path.normpath(outpath), bbox_inches="tight", dpi=300)
-    if show_plot:
+        fig.savefig(outpath, bbox_inches="tight")
+    if show:
         plt.show(block=True)
+    return fig
+
+
+def lineplot_prediction_compare(
+    x_1: np.ndarray,
+    x_2: np.ndarray,
+    times: np.ndarray,
+    data_labels: Sequence,
+    x_label: str = "Time (s)",
+    y_label: str | None = None,
+    alpha: float = 0.05,
+    n_perm: int = 1000,
+    correction_method: str = "cluster",
+    y_lims: Sequence | None = None,
+    two_tailed: bool = False,
+    paired_x1x2: bool = False,
+    outpath: Path | str | None = None,
+) -> figure.Figure:
+    """Plot comparison of continuous prediction arrays."""
+    fig, ax = plt.subplots(1, 1)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+    for i, data in enumerate([x_1, x_2]):
+        ax.plot(
+            times,
+            data.mean(axis=1),
+            label=data_labels[i],
+        )
+        ax.fill_between(
+            times,
+            data.mean(axis=1) - scipy.stats.sem(data, axis=1),
+            data.mean(axis=1) + scipy.stats.sem(data, axis=1),
+            alpha=0.5,
+        )
+    _pval_correction_lineplot(
+        ax=ax,
+        x=x_1,
+        y=x_2,
+        times=times,
+        alpha=alpha,
+        n_perm=n_perm,
+        correction_method=correction_method,
+        two_tailed=two_tailed,
+        min_cluster_size=2,
+        onesample_xy=paired_x1x2,
+    )
+    ax.set_title(f"{data_labels[0]} vs. {data_labels[1]}")
+    ax.set_xlabel(x_label)
+    ax.set_ylabel(y_label)
+    ax.legend()
+    if y_lims:
+        ax.set_ylim(y_lims[0], y_lims[1])
+    fig.tight_layout()
+    if outpath is not None:
+        fig.savefig(outpath, bbox_inches="tight")
     return fig
 
 
@@ -439,66 +409,113 @@ def _permutation_wrapper(x, y, n_perm) -> tuple:
 def _pval_correction_lineplot(
     ax: axes.Axes,
     x: np.ndarray,
-    y: np.ndarray,
-    x_lims: tuple,
-    p_vals: Iterable,
+    y: int | float | np.ndarray,
+    times: np.ndarray,
     alpha: float,
     correction_method: str,
-    n_perm: Optional[int] = None,
+    n_perm: int,
+    two_tailed: bool,
+    onesample_xy: bool,
+    min_cluster_size: int = 2,
 ) -> None:
     """Perform p-value correction for singe lineplot."""
     viridis = cm.get_cmap("viridis", 8)
-    if y.ndim == 1:
-        y = np.expand_dims(y, axis=1)
 
-    clusters, cluster_count = pte_stats.clusters_from_pvals(
-        p_vals=p_vals,
-        alpha=alpha,
-        correction_method=correction_method,
-        n_perm=n_perm,
-    )
+    if onesample_xy:
+        data_a = x - y
+        data_b = 0.0
+    else:
+        data_a = x
+        data_b = y
 
-    if cluster_count > 0:
-        label = f"p-value <= {alpha}"
-        x_labels = np.linspace(x_lims[0], x_lims[1], len(p_vals)).round(2)
-        for cluster_idx in range(1, cluster_count + 1):
-            index = np.where(clusters == cluster_idx)[0]
-            # time_point = x_labels[index]
-            lims = np.arange(index[0], index[-1] + 1)
-            y_lims = y.mean(axis=1)[lims]
-            if y_lims.size > 0:
-                ax.fill_between(
-                    x=lims,
-                    y1=x.mean(axis=1)[lims],
-                    y2=y_lims,
-                    alpha=0.5,
-                    color=viridis(7),
-                    label=label,
-                )
-                label = None  # Avoid printing label multiple times
-                # label_lims = lims[where]
-                for i in [0, -1]:
-                    ax.annotate(
-                        str(x_labels[lims[i]]) + "s",
-                        (lims[i], y_lims[i]),
-                        xytext=(0.0, 15),
-                        textcoords="offset points",
-                        verticalalignment="center",
-                        horizontalalignment="center",
-                        arrowprops=dict(facecolor="black", arrowstyle="-"),
-                    )
+    if correction_method == "cluster":
+        _, clusters_ind = pte_stats.cluster_analysis_1d(
+            data_a=data_a.T,
+            data_b=data_b,
+            alpha=alpha,
+            n_perm=n_perm,
+            only_max_cluster=False,
+            two_tailed=two_tailed,
+            min_cluster_size=min_cluster_size,
+        )
+        if len(clusters_ind) == 0:
+            return
+        cluster_count = len(clusters_ind)
+        clusters = np.zeros(data_a.shape[0], dtype=np.int32)
+        for ind in clusters_ind:
+            clusters[ind] = 1
+    elif correction_method in ["cluster_pvals", "fdr"]:
+        p_vals = pte_stats.timeseries_pvals(
+            x=data_a, y=data_b, n_perm=n_perm, two_tailed=two_tailed
+        )
+        clusters, cluster_count = pte_stats.clusters_from_pvals(
+            p_vals=p_vals,
+            alpha=alpha,
+            correction_method=correction_method,
+            n_perm=n_perm,
+            min_cluster_size=min_cluster_size,
+        )
+    else:
+        raise ValueError(
+            f"Unknown cluster correction method: {correction_method}."
+        )
+
+    if cluster_count <= 0:
+        print("No clusters found.")
+        return
+    if isinstance(y, (int, float)):
+        y_arr = np.ones((x.shape[0], 1))
+        y_arr[:, 0] = y
+    else:
+        y_arr = y
+    if onesample_xy:
+        x_arr = x
+    else:
+        x_arr = data_a
+    label = f"p ≤ {alpha}"
+    x_labels = times.round(2)
+    for cluster_idx in range(1, cluster_count + 1):
+        index = np.where(clusters == cluster_idx)[0]
+        if index.size == 0:
+            print("No clusters found.")
+            continue
+        lims = np.arange(index[0], index[-1] + 1)
+        y1 = x_arr.mean(axis=1)[lims]
+        y2 = y_arr.mean(axis=1)[lims]
+        ax.fill_between(
+            x=times[lims],
+            y1=y1,
+            y2=y2,
+            alpha=0.5,
+            color=viridis(7),
+            label=label,
+        )
+        label = None  # Avoid printing label multiple times
+        for i in [0, -1]:
+            x_label = x_labels[lims[i]]
+            ax.annotate(
+                str(x_label),
+                (x_label, y1[i]),
+                xytext=(0, 10),
+                textcoords="offset points",
+                verticalalignment="center",
+                horizontalalignment="center",
+                fontsize="x-large",
+                arrowprops=dict(
+                    facecolor="black", arrowstyle="-", shrinkA=0.01
+                ),
+            )
 
 
 def lineplot_prediction_single(
     data: np.ndarray,
+    times: np.ndarray,
     ax: axes.Axes,
-    threshold: Union[Iterable, int, float],
-    sfreq: Union[int, float],
-    x_lims: tuple,
+    label: str,
+    threshold: Iterable | int | float,
     color: tuple,
-    label: Optional[str],
-    subpl_title: str,
-    p_lim: float,
+    subplot_title: str,
+    alpha: float,
     n_perm: int,
     correction_method: str,
     two_tailed: bool,
@@ -508,52 +525,55 @@ def lineplot_prediction_single(
         threshold_value,
         threshold_arr,
     ) = pte_decode.results.timepoint.transform_threshold(
-        threshold=threshold, sfreq=sfreq, data=data
+        threshold=threshold,
+        data=data,
+        times=times,
     )
-
-    # x = np.arange(data.shape[0])
+    ax.plot(
+        times,
+        data.mean(axis=1),
+        color=color,
+        label=label,
+    )
     # lines = collections.LineCollection(
-    #     [np.column_stack([x, dat_]) for dat_ in data.T],
-    #     color=color,
-    #     linewidth=1,
-    #     alpha=0.5,
-    # )
+    #         [np.column_stack([times, single_data]) for single_data in data.T],
+    #         # color=color,
+    #         linewidth=1,
+    #         alpha=0.3,
+    #     )
     # ax.add_collection(lines)
 
-    ax.plot(data.mean(axis=1), color=color, label=label)
     ax.fill_between(
-        np.arange(data.shape[0]),
-        data.mean(axis=1) - stats.sem(data, axis=1),
-        data.mean(axis=1) + stats.sem(data, axis=1),
-        alpha=0.5,
+        times,
+        data.mean(axis=1) - scipy.stats.sem(data, axis=1),
+        data.mean(axis=1) + scipy.stats.sem(data, axis=1),
+        alpha=0.3,
         color=color,
         label=None,
     )
-
-    ax.plot(
-        threshold_arr,
-        color="r",
-        label="Threshold",
-        alpha=0.5,
-        linestyle="dashed",
-    )
-
-    p_vals = pte_stats.timeseries_pvals(
-        x=data, y=threshold_value, n_perm=n_perm, two_tailed=two_tailed
-    )
-
     _pval_correction_lineplot(
         ax=ax,
         x=data,
-        y=threshold_arr,
-        x_lims=x_lims,
-        p_vals=p_vals,
-        alpha=p_lim,
+        y=threshold_value,
+        times=times,
+        alpha=alpha,
         n_perm=n_perm,
         correction_method=correction_method,
+        two_tailed=two_tailed,
+        min_cluster_size=2,
+        onesample_xy=False,
     )
 
-    ax.set_title(subpl_title, fontsize="medium")
+    ax.plot(
+        times,
+        threshold_arr,
+        color="black",
+        label="Threshold",
+        alpha=1.0,
+        linestyle="--",
+    )
+
+    ax.set_title(subplot_title)
 
 
 def _add_median_labels(ax: axes.Axes, add_borders: bool = False) -> None:
@@ -578,7 +598,7 @@ def _add_median_labels(ax: axes.Axes, add_borders: bool = False) -> None:
             va="center",
             fontweight="light",
             color="white",
-            fontsize="medium",
+            # fontsize="medium",
         )
         if add_borders:
             # create median-colored border around white text for contrast

@@ -1,7 +1,7 @@
 """Module for loading results from decoding experiments."""
 import json
 from pathlib import Path
-from typing import Optional, Union
+import pickle
 
 import mne_bids
 import numpy as np
@@ -12,17 +12,13 @@ import pte_stats
 
 
 def load_results_singlechannel(
-    files_or_dir: Union[str, list, Path],
+    files: list[Path | str],
     scoring_key: str = "balanced_accuracy",
     average_runs: bool = False,
 ) -> pd.DataFrame:
     """Load results from *results.csv"""
-    # Create Dataframes from Files
-    files_or_dir = _handle_files_or_dir(
-        files_or_dir=files_or_dir, extensions="results.csv"
-    )
     results = []
-    for file in files_or_dir:
+    for file in files:
         subject = mne_bids.get_entities_from_fname(file, on_error="ignore")[
             "subject"
         ]
@@ -56,115 +52,59 @@ def load_results_singlechannel(
     return data_out
 
 
-def load_results(
-    files_or_dir: Union[str, list, Path],
-    scoring_key: str = "balanced_accuracy",
-    average_results: bool = True,
+def load_scores(
+    files: str | Path | list,
+    average_runs: bool = False,
 ) -> pd.DataFrame:
-    """Load prediction results from *results.csv"""
-    # Create Dataframes from Files
-    files_or_dir = _handle_files_or_dir(
-        files_or_dir=files_or_dir, extensions="results.csv"
-    )
+    """Load prediction scores from *Scores.csv"""
+    if not isinstance(files, list):
+        files = [files]
     results = []
-    for file in files_or_dir:
-        data_raw = pd.read_csv(file, index_col=[0], header=[0])
-        data: pd.DataFrame = pd.melt(
-            data_raw, id_vars=["channel_name"], value_vars=[scoring_key]
+    for file in files:
+        parent_dir = Path(file).parent.name
+        sub, med, stim = pte.filetools.sub_med_stim_from_fname(parent_dir)
+        data = (
+            pd.read_csv(file)
+            .drop(columns=["fold", "trial_ids"])
+            .groupby(["channel"])
+            .mean()
+            .reset_index()
         )
-        accuracies = []
-        for ch_name in data["channel_name"].unique():
-            accuracies.append(
-                [
-                    "LFP" if "LFP" in ch_name else "ECOG",
-                    data[data.channel_name == ch_name]
-                    .mean(numeric_only=True)
-                    .value,  # type: ignore
-                ]
-            )
-        df_acc = pd.DataFrame(accuracies, columns=["Channels", scoring_key])
-        df_lfp = df_acc[df_acc["Channels"] == "LFP"]
-        df_ecog = df_acc[df_acc["Channels"] == "ECOG"]
-        subject = mne_bids.get_entities_from_fname(file, on_error="ignore")[
-            "subject"
-        ]
-        values = [
-            file,
-            subject,
-            "OFF" if "MedOff" in file else "ON",
-            "OFF" if "StimOff" in file else "ON",
-        ]
-        results.extend(
-            [
-                values + ["LFP", df_lfp[scoring_key].max()],
-                values + ["ECOG", df_ecog[scoring_key].max()],
-            ]
+        data["Subject"] = sub
+        data["Medication"] = med
+        data["Stimulation"] = stim
+        data["Filename"] = parent_dir
+        results.append(data)
+    final = pd.concat(results)
+    if average_runs:
+        final = (
+            final.groupby(["Subject", "Medication", "Stimulation", "channel"])
+            .drop(columns=["Filename"])
+            .mean()
+            .reset_index()
         )
-    columns = [
-        "Filename",
-        "Subject",
-        "Medication",
-        "Stimulation",
-        "Channels",
-        scoring_key,
-    ]
-    columns = _normalize_columns(columns)
-    df_raw = pd.DataFrame(results, columns=columns)
-
-    if not average_results:
-        return df_raw
-
-    scoring_key = _normalize_columns([scoring_key])[0]
-    results_average = []
-    for ch_name in df_raw["Channels"].unique():
-        df_ch = df_raw.loc[df_raw["Channels"] == ch_name]
-        for subject in df_ch["Subject"].unique():
-            df_subj = df_ch.loc[df_ch["Subject"] == subject]
-            series_single = pd.Series(
-                df_subj.iloc[0].values, index=df_subj.columns
-            ).drop("Filename")
-            series_single[scoring_key] = df_subj[scoring_key].mean()
-            results_average.append(series_single)
-    df_average = pd.DataFrame(results_average)
-    return df_average
+    return final
 
 
 def _normalize_columns(columns: list[str]) -> list[str]:
     """Normalize column names."""
     new_columns = [
-        "".join([substr.capitalize() for substr in col.split("_")])
+        " ".join([substr.capitalize() for substr in col.split("_")])
         for col in columns
     ]
     return new_columns
 
 
-def _handle_files_or_dir(
-    files_or_dir: Union[str, list, Path],
-    extensions: Optional[Union[str, list]] = None,
-) -> list:
-    """Handle different cases of files_or_dir."""
-    if isinstance(files_or_dir, list):
-        return files_or_dir
-    file_finder = pte.filetools.get_filefinder(datatype="any")
-    file_finder.find_files(
-        directory=files_or_dir,
-        extensions=extensions,
-        verbose=True,
-    )
-    return file_finder.files
-
-
 def _load_labels_single(
-    fpath: Union[str, Path],
-    baseline: Optional[
-        tuple[Optional[Union[int, float]], Optional[Union[int, float]]]
-    ],
-    baseline_mode: Optional[str],
-    base_start: Optional[int],
-    base_end: Optional[int],
+    fpath: str | Path,
+    baseline: tuple[int | float | None, int | float | None] | None,
+    baseline_mode: str | None,
+    base_start: int | None,
+    base_end: int | None,
 ) -> pd.DataFrame:
     """Load time-locked predictions from single file."""
-    entities = mne_bids.get_entities_from_fname(fpath, on_error="ignore")
+    sub, med, stim = pte.filetools.sub_med_stim_from_fname(fpath)
+
     with open(fpath, "r", encoding="utf-8") as file:
         data = json.load(file)
 
@@ -179,22 +119,18 @@ def _load_labels_single(
     labels = pd.DataFrame(
         data=[
             [
-                entities["subject"],
-                entities["session"],
-                entities["task"],
-                entities["run"],
-                entities["acquisition"],
+                sub,
+                med,
+                stim,
                 label_name,
                 label_arr,
             ]
         ],
         columns=[
             "Subject",
-            "Session",
-            "Task",
-            "Run",
-            "Acquisition",
-            "Channel Name",
+            "Medication",
+            "Stimulation",
+            "Channel",
             "Data",
         ],
     )
@@ -202,121 +138,135 @@ def _load_labels_single(
 
 
 def load_predictions(
-    files_or_dir: Union[str, list, Path],
-    mode: str = "predictions",
-    sfreq: Optional[Union[int, float]] = None,
-    baseline: Optional[
-        tuple[Optional[Union[int, float]], Optional[Union[int, float]]]
-    ] = None,
+    files: list[Path | str],
+    baseline: tuple[int | float | None, int | float | None] | None = None,
     baseline_mode: str = "zscore",
+    baseline_trialwise: bool = False,
+    tmin: int | float | None = None,
+    tmax: int | float | None = None,
     average_predictions: bool = False,
     concatenate_runs: bool = True,
     average_runs: bool = False,
 ) -> pd.DataFrame:
     """Load time-locked predictions."""
-    files_or_dir = _handle_files_or_dir(
-        files_or_dir=files_or_dir, extensions="predictions_timelocked.json"
-    )
-
-    base_start, base_end = pte_stats.handle_baseline(
-        baseline=baseline, sfreq=sfreq
-    )
-
     df_list = []
-    for fpath in files_or_dir:
-        if mode == "predictions":
-            df_single: pd.DataFrame = _load_predictions_single(
-                fpath=fpath,
-                baseline=baseline,
-                baseline_mode=baseline_mode,
-                base_start=base_start,
-                base_end=base_end,
-            )
-        elif mode == "targets":
-            df_single: pd.DataFrame = _load_labels_single(
-                fpath=fpath,
-                baseline=baseline,
-                baseline_mode=baseline_mode,
-                base_start=base_start,
-                base_end=base_end,
-            )
-        else:
-            raise ValueError(
-                "`mode` must be one of either `targets` or "
-                f"`predictions. Got: {mode}."
-            )
+    for file in files:
+        data_single = load_predictions_singlefile(
+            file=file,
+            baseline=baseline,
+            baseline_mode=baseline_mode,
+            baseline_trialwise=baseline_trialwise,
+            tmin=tmin,
+            tmax=tmax,
+        )
         if average_predictions:
-            df_single["Data"] = (
-                df_single["Data"]
+            data_single["Predictions"] = (
+                data_single["Predictions"]
                 .apply(np.mean, axis=0)
                 .apply(np.expand_dims, axis=0)
             )
-        df_list.append(df_single)
-    df_all: pd.DataFrame = pd.concat(objs=df_list)
+        df_list.append(data_single)
+    data_all: pd.DataFrame = pd.concat(df_list)  # type: ignore
     if concatenate_runs:
-        df_all = _concatenate_runs(data=df_all)
+        data_all = _concatenate_runs(data=data_all)
     if average_runs:
-        df_all["Data"] = (
-            df_all["Data"].apply(np.mean, axis=0).apply(np.expand_dims, axis=0)
+        data_all["Predictions"] = (
+            data_all["Predictions"]
+            .apply(np.mean, axis=0)
+            .apply(np.expand_dims, axis=0)
         )
-    return df_all
+    return data_all
 
 
-def _concatenate_runs(data: pd.DataFrame):
+def _concatenate_runs(data: pd.DataFrame) -> pd.DataFrame:
     """Concatenate predictions from different runs in a single patient."""
     data_list = []
     for subject in data["Subject"].unique():
         dat_sub = data[data["Subject"] == subject]
-        for ch_name in dat_sub["Channel Name"].unique():
-            dat_concat = np.vstack(
-                dat_sub["Data"][dat_sub["Channel Name"] == ch_name].to_numpy()
-            )
-            data_list.append([subject, ch_name, dat_concat])
-    return pd.DataFrame(data_list, columns=["Subject", "Channel Name", "Data"])
+        dat_concat = np.vstack(dat_sub["Predictions"].to_numpy())
+        data_list.append([subject, dat_concat])
+    return pd.DataFrame(data_list, columns=["Subject", "Predictions"])
 
 
-def _load_predictions_single(
-    fpath: Union[str, Path],
-    baseline: Optional[
-        tuple[Optional[Union[int, float]], Optional[Union[int, float]]]
-    ],
-    baseline_mode: str,
-    base_start: Optional[int],
-    base_end: Optional[int],
+def load_predictions_singlefile(
+    file: str | Path,
+    baseline: tuple[int | float | None, int | float | None]
+    | None = (None, None),
+    baseline_mode: str = "zscore",
+    baseline_trialwise: bool = False,
+    tmin: int | float | None = None,
+    tmax: int | float | None = None,
 ) -> pd.DataFrame:
     """Load time-locked predictions from single file."""
-    entities = mne_bids.get_entities_from_fname(fpath, on_error="ignore")
-    with open(fpath, "r", encoding="utf-8") as file:
-        preds = json.load(file)
-    data_list = []
-    for ch_name in preds.keys():
-        if any(keyw in ch_name for keyw in ["ECOG", "LFP"]):
-            pred_arr = np.stack(preds[ch_name], axis=0)
-            if baseline:
-                pred_arr = pte_stats.baseline_correct(
-                    pred_arr, baseline_mode, base_start, base_end
-                )
-            data_list.append(
-                [
-                    entities["subject"],
-                    entities["session"],
-                    entities["task"],
-                    entities["run"],
-                    entities["acquisition"],
-                    ch_name,
-                    pred_arr,
-                ]
-            )
-    data = pd.DataFrame(
-        data=data_list,
+    # parent_dir = Path(fpath).parent.name
+    parent_dir = Path(file).parent.name
+    items = parent_dir.split("_")
+    items_kept = []
+    for item in items:
+        if item in ("eeg", "ieeg"):
+            break
+        items_kept.append(item)
+    filename = "_".join(items_kept)
+    sub, med, stim = pte.filetools.sub_med_stim_from_fname(filename)
+    with open(file, "rb") as file:
+        pred_data = pickle.load(file)
+    predictions = np.stack(pred_data["predictions"], axis=0)
+    times = np.array(pred_data["times"])
+
+    base_start, base_end = pte_stats.handle_baseline_bytimes(
+        baseline=baseline, times=times
+    )
+    if baseline:
+        predictions = pte_stats.baseline_correct(
+            data=predictions,
+            baseline_mode=baseline_mode,
+            base_start=base_start,
+            base_end=base_end,
+            baseline_trialwise=baseline_trialwise,
+        )
+
+    if any((tmin is not None, tmax is not None)):
+        predictions, times = _crop_predictions(
+            preds=predictions, times=times, tmin=tmin, tmax=tmax
+        )
+
+    data_final = pd.DataFrame(
+        data=(
+            (
+                sub,
+                med,
+                stim,
+                pred_data["trial_ids"],
+                times,
+                predictions,
+                filename,
+            ),
+        ),
         columns=[
             "Subject",
-            "Session",
-            "Task",
-            "Run",
-            "Acquisition",
-            "Channel Name",
-            "Data",
+            "Medication",
+            "Stimulation",
+            "trial_ids",
+            "times",
+            "Predictions",
+            "filename",
         ],
     )
-    return data
+    return data_final
+
+
+def _crop_predictions(
+    preds: np.ndarray,
+    times: np.ndarray,
+    tmin: int | float | None = None,
+    tmax: int | float | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    if tmin is not None:
+        idx_tmin = tmin <= times
+        times = times[idx_tmin]
+        preds = preds[..., idx_tmin]
+    if tmax is not None:
+        idx_tmax = times <= tmax
+        times = times[idx_tmax]
+        preds = preds[..., idx_tmax]
+    return preds, times
