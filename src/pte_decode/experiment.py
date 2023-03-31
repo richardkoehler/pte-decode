@@ -1,15 +1,24 @@
-"""Module for running a decoding experiment."""
+"""Module for running decoding experiments."""
+import json
+from pathlib import Path
+from typing import Any, Literal, Sequence
 import pickle
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Sequence
 
+import mne_bids
 import numpy as np
+
 import pandas as pd
+import pte
 import pte_decode
+from joblib import Parallel, delayed
 from sklearn.inspection import permutation_importance
 from sklearn.metrics import balanced_accuracy_score
-from sklearn.model_selection import BaseCrossValidator, GroupKFold
+from sklearn.model_selection import (
+    BaseCrossValidator,
+    GroupKFold,
+    LeaveOneGroupOut,
+)
 
 
 @dataclass
@@ -24,7 +33,8 @@ class _Results:
     predictions_epochs: dict = field(init=False, default_factory=dict)
     predictions_concat: dict = field(init=False, default_factory=dict)
     feature_importances: list = field(init=False, default_factory=list)
-    path: str = field(init=False)
+    path: Path = field(init=False)
+    filename: str = field(init=False)
 
     def __post_init__(self) -> None:
         self.predictions_concat = self._init_pred_concat()
@@ -138,17 +148,15 @@ class _Results:
             )
         )
 
-    def set_path(self, path: Path | str, verbose: bool) -> str:
+    def set_path(self, path: Path | str, filename: str, verbose: bool) -> Path:
         """Set path attribute and make corresponding folder."""
-        path = Path(path).resolve()
-        out_dir = path.parent
-        self.path = str(path)
-
-        # Save results, check if directory exists
-        if not out_dir.is_dir():
-            out_dir.mkdir(parents=True)
+        # Check if directory exists
+        out_dir = Path(path)
         if verbose:
-            print(f"Creating folder: \n{path}")
+            print(f"Creating folder: \n{out_dir}")
+        out_dir.mkdir(exist_ok=True, parents=True)
+        self.path = out_dir
+        self.filename = filename
         return self.path
 
     def save_scores(
@@ -166,17 +174,21 @@ class _Results:
             ],
             index=None,
         )
-        scores_df.to_csv(self.path + r"/Scores.csv", index=False)
+        scores_df.to_csv(
+            self.path / f"{self.filename}_Scores.csv", index=False
+        )
 
     def save_predictions_concatenated(self) -> None:
         """Save concatenated predictions"""
         pd.DataFrame(self.predictions_concat).to_csv(
-            self.path + r"/PredConcatenated.csv", index=False
+            self.path / f"{self.filename}_PredConcatenated.csv", index=False
         )
 
     def save_predictions_timelocked(self) -> None:
         """Save predictions time-locked to trial onset"""
-        with open(self.path + r"/PredTimelocked.pickle", "wb") as file:
+        with open(
+            self.path / f"{self.filename}_PredTimelocked.pickle", "wb"
+        ) as file:
             pickle.dump(
                 self.predictions_epochs, file, protocol=pickle.HIGHEST_PROTOCOL
             )
@@ -197,7 +209,9 @@ class _Results:
                 "feature_importance",
             ],
             index=None,
-        ).to_csv(self.path + r"/FeatImportances.csv", index=False)
+        ).to_csv(
+            self.path / f"{self.filename}_FeatImportances.csv", index=False
+        )
 
 
 @dataclass
@@ -216,38 +230,48 @@ class DecodingExperiment:
     feature_importance: Any = False
     channels_used: str = "single"
     prediction_mode: str = "classify"
-    cv_outer: BaseCrossValidator = GroupKFold(n_splits=5)
-    cv_inner: BaseCrossValidator = GroupKFold(n_splits=5)
+    n_splits_outer: int | Literal["max"] = "max"
+    n_splits_inner: int | Literal["max"] = 5
     verbose: bool = False
+    results: _Results = field(init=False)
     data_epochs: np.ndarray = field(init=False)
     fold: int = field(init=False)
-    results: _Results = field(init=False)
+    cv_outer: BaseCrossValidator = field(init=False)
+    cv_inner: BaseCrossValidator = field(init=False)
 
     def __post_init__(self) -> None:
         _assert_channels_used_is_valid(self.channels_used)
         self.results = self._init_results()
         self.data_epochs = self.features.values
         self.fold = 0
+        if self.n_splits_outer == "max":
+            self.cv_outer = LeaveOneGroupOut()
+        else:
+            self.cv_outer = GroupKFold(n_splits=self.n_splits_outer)
+        if self.n_splits_inner == "max":
+            self.cv_inner = LeaveOneGroupOut()
+        else:
+            self.cv_inner = GroupKFold(n_splits=self.n_splits_inner)
 
     def run(self) -> None:
         """Calculate classification performance and out results."""
         # Outer cross-validation
-        split = tuple(self.cv_outer.split(
-            self.features, self.labels, self.trial_ids
-        ))
-        if self.verbose:
-            no_splits = len(tuple(split))
+        split = tuple(
+            self.cv_outer.split(self.features, self.labels, self.trial_ids)
+        )
         for train_ind, test_ind in self.cv_outer.split(
             self.features, self.labels, self.trial_ids
         ):
             if self.verbose:
+                no_splits = len(tuple(split))
                 print(f"Fold no.: {self.fold + 1}/{no_splits}")
             self._run_outer_cv(train_ind=train_ind, test_ind=test_ind)
             self.fold += 1
 
     def save(
         self,
-        path: Path | str,
+        out_dir: Path | str,
+        filename: str,
         scores: bool = True,
         predictions_concatenated: bool = True,
         predictions_timelocked: bool = True,
@@ -255,9 +279,11 @@ class DecodingExperiment:
         final_models: bool = True,
     ) -> None:
         """Save results to given path."""
-
         # self.features.loc[:, "trial_ids"] = self.trial_ids
-        basename = self.results.set_path(path=path, verbose=self.verbose)
+        out_dir = self.results.set_path(
+            path=out_dir, filename=filename, verbose=self.verbose
+        )
+        self._save_params(out_dir=out_dir, filename=filename)
         if scores:
             self.results.save_scores(
                 scoring=self.scoring,
@@ -269,7 +295,7 @@ class DecodingExperiment:
         if feature_importances:
             self.results.save_feature_importances()
         if final_models:
-            self._save_final_model(basename)
+            self._save_final_model(out_dir=out_dir, filename=filename)
 
     def _init_results(self) -> _Results:
         """Initialize results container."""
@@ -317,7 +343,7 @@ class DecodingExperiment:
                 trial_ids_test=trial_ids_test,
             )
 
-    def _save_final_model(self, basename: str) -> None:
+    def _save_final_model(self, out_dir: Path, filename: str) -> None:
         # Handle which channels are used
         ch_picks = self._get_picks_and_types(
             features=self.features,
@@ -336,8 +362,27 @@ class DecodingExperiment:
             )
             if ch_pick == "all":
                 ch_pick = ch_pick.capitalize()
-            filename = str(Path(basename).parent / f"FinalModel{ch_pick}")
-            self.decoder.save_model(filename)
+            out_path = out_dir / f"{filename}_FinalModel{ch_pick}"
+            self.decoder.save_model(out_path)
+
+    def _save_params(self, out_dir: Path, filename: str) -> None:
+        params = {}
+        for item in [
+            "decoder",
+            "ch_names",
+            "scoring",
+            "feature_importance",
+            "channels_used",
+            "prediction_mode",
+            "n_splits_outer",
+            "n_splits_inner",
+        ]:
+            if item == "decoder":
+                params[item] = getattr(self, item).__class__.__name__
+            else:
+                params[item] = getattr(self, item)
+        with open(out_dir / f"{filename}_ParamsDecoding.json", "w") as f:
+            json.dump({k: params[k] for k in sorted(params)}, f, indent=4)
 
     def _run_channel_pick(
         self,
@@ -397,7 +442,9 @@ class DecodingExperiment:
                 feature_importances=feature_importances,
             )
 
-    def _get_prediction_epochs(self, columns, trial_ids) -> list[list[float]] | None:
+    def _get_prediction_epochs(
+        self, columns, trial_ids
+    ) -> list[list[float]] | None:
         """Get feature and prediction epochs."""
         feature_epochs = self._get_feature_epochs(
             features_used=columns,
@@ -597,3 +644,247 @@ def _assert_channels_used_is_valid(channels_used: str) -> None:
             "Got invalid value for `channels_used`."
             f" Got: {channels_used}, allowed: {allowed_values}."
         )
+
+
+def run_pipeline_multiproc(
+    filepaths_features: list[str] | list[Path],
+    n_jobs: int = 1,
+    **kwargs,
+) -> None:
+    """Run decoding pipeline with given files."""
+    if not filepaths_features:
+        raise ValueError("No feature files specified.")
+    if len(filepaths_features) == 1 or n_jobs in (0, 1):
+        for feature_file in filepaths_features:
+            run_pipeline(
+                filename=feature_file,
+                **kwargs,
+            )
+        return
+    Parallel(n_jobs=n_jobs, verbose=1)(
+        delayed(run_pipeline)(filename=feature_file, **kwargs)
+        for feature_file in filepaths_features
+    )
+
+
+def run_pipeline(
+    feature_root: Path | str,
+    filename: Path | str,
+    label_channels: Sequence[str],
+    out_root: Path | str,
+    feature_keywords: Sequence[str],
+    plotting_target_channels: list[str],
+    target_begin: str | int | float,
+    target_end: str | int | float,
+    pipeline_steps: Sequence[str] = ["engineer", "select", "decode"],
+    classifier: str = "lda",
+    optimize: bool = False,
+    balancing: str | None = None,
+    side: str | None = None,
+    channels_used: str = "single",
+    types_used: str | Sequence[str] = "all",
+    hemispheres_used: str = "both",
+    scoring: str = "balanced_accuracy",
+    bad_epochs_path: Path | str | None = None,
+    prediction_mode: str = "classify",
+    pred_begin: int | float = -3.0,
+    pred_end: int | float = 2.0,
+    use_times: int = 1,
+    normalization_mode: str | None = None,
+    dist_end: int | float = 2.0,
+    excep_dist_end: int | float = 2.0,
+    exception_keywords: Sequence[str] | None = None,
+    feature_importance: bool | int = False,
+    verbose: bool = True,
+    rest_begin: int | float = -5.0,
+    rest_end: int | float = -2.0,
+    **kwargs,
+) -> None:
+    """Run experiment with single file."""
+    filename = Path(filename)
+    print(f"Using file: {filename.name}")
+    if not filename.name.endswith("_FEATURES.csv"):
+        raise ValueError(
+            f"Feature file must end with '_FEATURES.csv'. Got: {filename}"
+        )
+    filename = filename.name.removesuffix("_FEATURES.csv")
+    out_path = Path(out_root) / filename
+    out_path.mkdir(exist_ok=True)
+    features, ch_names, ch_types, sfreq = load_pynm_features(
+        feature_root, filename
+    )
+    sfreq = int(sfreq)
+    if side == "auto":
+        side = _get_trial_side(fname=filename)
+
+    params = {
+        "pipeline_steps": pipeline_steps,
+        "label_channels": label_channels,
+        "feature_keywords": feature_keywords,
+        "side": side,
+        "plotting_target_channels": plotting_target_channels,
+        "target_begin": target_begin,
+        "target_end": target_end,
+        "classifier": classifier,
+        "scoring": scoring,
+        "optimize": optimize,
+        "balancing": balancing,
+        "types_used": types_used,
+        "hemispheres_used": hemispheres_used,
+        "bad_epochs_path": str(bad_epochs_path),
+        "pred_begin": pred_begin,
+        "pred_end": pred_end,
+        "use_times": use_times,
+        "normalization_mode": normalization_mode,
+        "dist_end": dist_end,
+        "excep_dist_end": excep_dist_end,
+        "exception_keywords": exception_keywords,
+        "rest_begin": rest_begin,
+        "rest_end": rest_end,
+    }
+    with open(out_path / f"{filename}_ParamsPipeline.json", "w") as f:
+        json.dump({k: params[k] for k in sorted(params)}, f, indent=4)
+
+    features, label, plotting_target = pte_decode.FeatureCleaner(
+        data_channel_names=ch_names,
+        data_channel_types=ch_types,
+        label_channels=label_channels,
+        plotting_target_channels=plotting_target_channels,
+        side=side,
+        types_used=types_used,
+        hemispheres_used=hemispheres_used,
+    ).run(features=features, out_path=out_path)
+
+    if "engineer" in pipeline_steps:
+        features = pte_decode.FeatureEngineer(
+            use_times=use_times,
+            normalization_mode=normalization_mode,
+            verbose=verbose,
+        ).run(features, out_path=out_path)
+
+    if "select" in pipeline_steps:
+        features = pte_decode.FeatureSelector(
+            feature_keywords=feature_keywords, verbose=verbose
+        ).run(features, out_path=out_path)
+
+    # Handle bad events file
+    bad_epochs = None
+    if bad_epochs_path is not None:
+        bad_epochs = pte.filetools.get_bad_epochs(
+            bad_epochs_dir=bad_epochs_path, filename=filename
+        )["event_id"].to_numpy()
+
+    # Handle exception files
+    dist_end = _handle_exception_files(
+        fname=filename,
+        dist_end=dist_end,
+        excep_dist_end=excep_dist_end,
+        exception_keywords=exception_keywords,
+    )
+
+    # Get feature epochs
+    (features_concat, features_timelocked, _, _,) = pte_decode.FeatureEpochs(
+        target_begin=target_begin,
+        target_end=target_end,
+        rest_begin=rest_begin,
+        rest_end=rest_end,
+        offset_rest_begin=dist_end,
+        epoch_begin=pred_begin,
+        epoch_end=pred_end,
+        verbose=verbose,
+    ).run(
+        features=features,
+        label=label,
+        plotting_target=plotting_target,
+        sfreq=sfreq,
+        bad_epochs=bad_epochs,
+        out_path=out_path,
+    )
+
+    if "decode" in pipeline_steps:
+        label_concat = features_concat["labels"]
+        trial_ids = features_concat["trial_ids"]
+        features_concat = features_concat.drop(
+            columns=["time", "time relative", "labels", "trial_ids"]
+        )
+        decoder = pte_decode.get_decoder(
+            classifier=classifier,
+            scoring=scoring,
+            balancing=balancing,
+            optimize=optimize,
+        )
+        # Initialize Experiment instance
+        experiment = pte_decode.DecodingExperiment(
+            features=features_concat,
+            features_timelocked=features_timelocked["features"],
+            trial_ids_timelocked=features_timelocked["trial_ids"],
+            times_timelocked=features_timelocked["time"],
+            labels=label_concat,
+            trial_ids=trial_ids,
+            ch_names=ch_names,
+            decoder=decoder,
+            scoring=scoring,
+            feature_importance=feature_importance,
+            channels_used=channels_used,
+            prediction_mode=prediction_mode,
+            verbose=verbose,
+            **kwargs,
+        )
+        experiment.run()
+        experiment.save(
+            out_dir=out_path,
+            filename=filename,
+            scores=True,
+            predictions_concatenated=True,
+            predictions_timelocked=True,
+            feature_importances=True,
+            final_models=False,
+        )
+
+
+def load_pynm_features(
+    feature_root: Path | str, fpath: Path | str
+) -> tuple[pd.DataFrame, list[str], list[str], int | float]:
+    from py_neuromodulation import (  # pylint: disable=import-outside-toplevel
+        nm_analysis,
+    )
+
+    nm_reader = nm_analysis.Feature_Reader(
+        feature_dir=str(feature_root), feature_file=str(fpath)
+    )
+
+    ch_types_all = nm_reader.nm_channels[["new_name", "type"]].set_index(
+        "new_name"
+    )
+    ch_names = nm_reader.sidecar["ch_names"]
+    ch_types = ch_types_all.loc[ch_names, "type"].tolist()  # type: ignore
+    return (
+        nm_reader.feature_arr,
+        ch_names,
+        ch_types,
+        nm_reader.settings["sampling_rate_features_hz"],
+    )
+
+
+def _handle_exception_files(
+    fname: Path | str,
+    dist_end: int | float,
+    excep_dist_end: int | float,
+    exception_keywords: Sequence[str] | None = None,
+) -> int | float:
+    """Check if current file is listed in exception files."""
+    if exception_keywords:
+        if any(keyw in str(fname) for keyw in exception_keywords):
+            print("Exception file recognized: ", Path(fname).name)
+            return excep_dist_end
+    return dist_end
+
+
+def _get_trial_side(fname: Path | str) -> str | None:
+    """Get body side of given trial"""
+    task: str = mne_bids.get_entities_from_fname(str(fname))["task"]
+    if task.endswith("R"):
+        return "right"
+    if task.endswith("L"):
+        return "left"
+    return None

@@ -13,7 +13,7 @@ dependencies:
   - numpy
   - pandas
   - pip
-  - python >= 3.9
+  - python == 3.10
   - scikit-learn
   - scipy
   - seaborn

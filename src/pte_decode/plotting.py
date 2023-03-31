@@ -160,12 +160,14 @@ def _add_lines(
     data = data.sort_values(  # type: ignore
         by=x, key=lambda k: k.map({item: i for i, item in enumerate(order)})
     )
-    lines = (
+    lines = [
         [[i, n] for i, n in enumerate(group)]
         for _, group in data.groupby([add_lines], sort=False)[y]
-    )
+    ]
     ax.add_collection(
-        collections.LineCollection(lines, colors="grey", linewidths=1)
+        collections.LineCollection(
+            lines, colors="grey", linewidths=1
+        )  # type: ignore
     )
 
 
@@ -216,7 +218,7 @@ def _add_stats(
         test=stat_test,
         text_format="simple",
         loc=location,
-        color="grey",
+        color="black",
         pvalue_format={
             "pvalue_thresholds": [
                 [1e-6, "0.000001"],
@@ -235,11 +237,137 @@ def _add_stats(
     annotator.apply_and_annotate()
 
 
+def lineplot_single(
+    data: np.ndarray,
+    times: np.ndarray,
+    x_label: str = "Time (s)",
+    y_label: str | None = None,
+    title: str | None = None,
+    outpath: Path | str | None = None,
+    threshold: int | float | tuple[int | float, int | float] = (0.0, 1.0),
+    alpha: float = 0.05,
+    n_perm: int = 1000,
+    correction_method: str = "cluster",
+    two_tailed: bool = False,
+    one_tailed_test: Literal["larger"] | Literal["smaller"] = "larger",
+    figsize: Sequence | None = None,
+    y_lims: Sequence | None = None,
+    color: tuple | None = None,
+    show: bool = True,
+) -> figure.Figure:
+    """Plot prediction line for single model."""
+    fig, ax = plt.subplots(1, 1, figsize=figsize)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    if not color:
+        color = plt.rcParams["axes.prop_cycle"].by_key()["color"][0]
+    _lineplot_single(
+        data=data,
+        times=times,
+        title=title,
+        ax=ax,
+        label=None,
+        threshold=threshold,
+        color=color,
+        alpha=alpha,
+        n_perm=n_perm,
+        correction_method=correction_method,
+        two_tailed=two_tailed,
+        one_tailed_test=one_tailed_test,
+    )
+    ax.set_xlabel(x_label)
+    ax.legend()
+    if y_lims:
+        ax.set_ylim(y_lims[0], y_lims[1])
+    if y_label:
+        ax.set_ylabel(y_label)
+    fig.tight_layout()
+    if outpath:
+        fig.savefig(str(outpath), bbox_inches="tight")
+    if show:
+        plt.show(block=True)
+    return fig
+
+
+def _lineplot_single(
+    data: np.ndarray,
+    times: np.ndarray,
+    title: str | None,
+    ax: axes.Axes,
+    label: str,
+    color: tuple,
+    threshold: Iterable | int | float,
+    alpha: float,
+    n_perm: int,
+    correction_method: str,
+    two_tailed: bool,
+    one_tailed_test: Literal["larger"] | Literal["smaller"],
+) -> None:
+    """Plot prediction line for single model."""
+    (
+        threshold_value,
+        threshold_arr,
+    ) = pte_decode.results.timepoint.transform_threshold(
+        threshold=threshold,
+        data=data,
+        times=times,
+    )
+    ax.plot(
+        times,
+        data.mean(axis=1),
+        color=color,
+        label=label,
+    )
+    # lines = collections.LineCollection(
+    #         [np.column_stack(
+    #           [times, single_data]) for single_data in data.T],
+    #         # color=color,
+    #         linewidth=1,
+    #         alpha=0.3,
+    #     )
+    # ax.add_collection(lines)
+
+    ax.fill_between(
+        times,
+        data.mean(axis=1) - scipy.stats.sem(data, axis=1),
+        data.mean(axis=1) + scipy.stats.sem(data, axis=1),
+        alpha=0.3,
+        color=color,
+        label=None,
+    )
+
+    _pval_correction_lineplot(
+        ax=ax,
+        x=data,
+        y=threshold_value,
+        times=times,
+        alpha=alpha,
+        n_perm=n_perm,
+        correction_method=correction_method,
+        two_tailed=two_tailed,
+        one_tailed_test=one_tailed_test,
+        min_cluster_size=2,
+        onesample_xy=False,
+    )
+
+    ax.plot(
+        times,
+        threshold_arr,
+        color="black",
+        label="Threshold",
+        alpha=1.0,
+        linestyle="--",
+    )
+    if title:
+        ax.set_title(title)
+
+
 def lineplot_prediction(
     x_1: np.ndarray,
     times: np.ndarray,
     data_labels: Sequence,
     x_2: np.ndarray | None = None,
+    title: str | None = None,
     outpath: Path | str | None = None,
     x_label: str = "Time (s)",
     y_label: str | None = None,
@@ -248,6 +376,7 @@ def lineplot_prediction(
     n_perm: int = 1000,
     correction_method: str = "cluster",
     two_tailed: bool = False,
+    one_tailed_test: Literal["larger"] | Literal["smaller"] = "larger",
     y_lims: Sequence | None = None,
     compare_x1x2: bool = False,
     paired_x1x2: bool = False,
@@ -267,27 +396,27 @@ def lineplot_prediction(
     fig, axs = plt.subplots(
         ncols=1,
         nrows=nrows,
-        figsize=(5.6, 4.8),
         sharex=True,
         sharey=True,
     )
-    if x_2 is None:
+    if isinstance(axs, axes.Axes):
         axs = [axs]
 
     for i, data in enumerate((x_1, x_2)):
         if data is not None:
-            lineplot_prediction_single(
+            _lineplot_single(
                 data=data,
                 times=times,
                 ax=axs[i],
                 label=data_labels[i],
                 threshold=threshold,
                 color=colors[i],
-                subplot_title=data_labels[i],
+                title=data_labels[i],
                 alpha=alpha,
                 n_perm=n_perm,
                 correction_method=correction_method,
                 two_tailed=two_tailed,
+                one_tailed_test=one_tailed_test,
             )
 
     if compare_x1x2:
@@ -319,7 +448,7 @@ def lineplot_prediction(
             alpha=alpha,
             n_perm=n_perm,
             correction_method=correction_method,
-            two_tailed=two_tailed,
+            two_tailed=True,
             min_cluster_size=2,
             onesample_xy=paired_x1x2,
         )
@@ -330,12 +459,13 @@ def lineplot_prediction(
         ax.legend(loc="upper left", bbox_to_anchor=(1.0, 1.05))
         if y_lims:
             ax.set_ylim(y_lims[0], y_lims[1])
-
-        ax.set_ylabel(y_label)
-
+        if y_label:
+            ax.set_ylabel(y_label)
+    if title is not None:
+        fig.suptitle(title)
     fig.tight_layout()
     if outpath:
-        fig.savefig(outpath, bbox_inches="tight")
+        fig.savefig(str(outpath), bbox_inches="tight")
     if show:
         plt.show(block=True)
     return fig
@@ -387,13 +517,14 @@ def lineplot_prediction_compare(
     )
     ax.set_title(f"{data_labels[0]} vs. {data_labels[1]}")
     ax.set_xlabel(x_label)
-    ax.set_ylabel(y_label)
+    if y_label:
+        ax.set_ylabel(y_label)
     ax.legend()
     if y_lims:
         ax.set_ylim(y_lims[0], y_lims[1])
     fig.tight_layout()
     if outpath is not None:
-        fig.savefig(outpath, bbox_inches="tight")
+        fig.savefig(str(outpath), bbox_inches="tight")
     return fig
 
 
@@ -416,6 +547,7 @@ def _pval_correction_lineplot(
     n_perm: int,
     two_tailed: bool,
     onesample_xy: bool,
+    one_tailed_test: Literal["larger"] | Literal["smaller"] = "larger",
     min_cluster_size: int = 2,
 ) -> None:
     """Perform p-value correction for singe lineplot."""
@@ -428,9 +560,14 @@ def _pval_correction_lineplot(
         data_a = x
         data_b = y
 
+    if not two_tailed and one_tailed_test == "smaller":
+        data_a_stat = data_a * -1
+    else:
+        data_a_stat = data_a
+
     if correction_method == "cluster":
         _, clusters_ind = pte_stats.cluster_analysis_1d(
-            data_a=data_a.T,
+            data_a=data_a_stat.T,
             data_b=data_b,
             alpha=alpha,
             n_perm=n_perm,
@@ -441,12 +578,12 @@ def _pval_correction_lineplot(
         if len(clusters_ind) == 0:
             return
         cluster_count = len(clusters_ind)
-        clusters = np.zeros(data_a.shape[0], dtype=np.int32)
+        clusters = np.zeros(data_a_stat.shape[0], dtype=np.int32)
         for ind in clusters_ind:
             clusters[ind] = 1
     elif correction_method in ["cluster_pvals", "fdr"]:
         p_vals = pte_stats.timeseries_pvals(
-            x=data_a, y=data_b, n_perm=n_perm, two_tailed=two_tailed
+            x=data_a_stat, y=data_b, n_perm=n_perm, two_tailed=two_tailed
         )
         clusters, cluster_count = pte_stats.clusters_from_pvals(
             p_vals=p_vals,
@@ -505,75 +642,6 @@ def _pval_correction_lineplot(
                     facecolor="black", arrowstyle="-", shrinkA=0.01
                 ),
             )
-
-
-def lineplot_prediction_single(
-    data: np.ndarray,
-    times: np.ndarray,
-    ax: axes.Axes,
-    label: str,
-    threshold: Iterable | int | float,
-    color: tuple,
-    subplot_title: str,
-    alpha: float,
-    n_perm: int,
-    correction_method: str,
-    two_tailed: bool,
-) -> None:
-    """Plot prediction line for single model."""
-    (
-        threshold_value,
-        threshold_arr,
-    ) = pte_decode.results.timepoint.transform_threshold(
-        threshold=threshold,
-        data=data,
-        times=times,
-    )
-    ax.plot(
-        times,
-        data.mean(axis=1),
-        color=color,
-        label=label,
-    )
-    # lines = collections.LineCollection(
-    #         [np.column_stack([times, single_data]) for single_data in data.T],
-    #         # color=color,
-    #         linewidth=1,
-    #         alpha=0.3,
-    #     )
-    # ax.add_collection(lines)
-
-    ax.fill_between(
-        times,
-        data.mean(axis=1) - scipy.stats.sem(data, axis=1),
-        data.mean(axis=1) + scipy.stats.sem(data, axis=1),
-        alpha=0.3,
-        color=color,
-        label=None,
-    )
-    _pval_correction_lineplot(
-        ax=ax,
-        x=data,
-        y=threshold_value,
-        times=times,
-        alpha=alpha,
-        n_perm=n_perm,
-        correction_method=correction_method,
-        two_tailed=two_tailed,
-        min_cluster_size=2,
-        onesample_xy=False,
-    )
-
-    ax.plot(
-        times,
-        threshold_arr,
-        color="black",
-        label="Threshold",
-        alpha=1.0,
-        linestyle="--",
-    )
-
-    ax.set_title(subplot_title)
 
 
 def _add_median_labels(ax: axes.Axes, add_borders: bool = False) -> None:

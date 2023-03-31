@@ -5,10 +5,166 @@ import pickle
 
 import mne_bids
 import numpy as np
+
+from numba import njit
 import pandas as pd
 
 import pte
 import pte_stats
+
+
+@njit
+def threshold_events(data: np.ndarray, threshold: float | int) -> np.ndarray:
+    """Apply threshold to find start and end of events.
+
+    Arguments
+    ---------
+    data : np.ndarray
+        Input data to apply thresholding to.
+    threshold : float | int
+        Threshold value.
+
+    Returns
+    -------
+    np.ndarray
+        Event array.
+    """
+
+    onoff = np.where(data > threshold, 1, 0)
+    onoff_diff = np.zeros_like(onoff)
+    onoff_diff[1:] = np.diff(onoff)
+    index_start = np.where(onoff_diff == 1)[0]
+    index_stop = np.where(onoff_diff == -1)[0]
+    arr_start = np.stack(
+        (index_start, np.zeros_like(index_start), np.ones_like(index_start)),
+        axis=1,
+    )
+    arr_stop = np.stack(
+        (index_stop, np.zeros_like(index_stop), np.ones_like(index_stop) * -1),
+        axis=1,
+    )
+    return np.vstack((arr_start, arr_stop))
+
+
+def get_earliest_timepoint(
+    data: np.ndarray,
+    times: np.ndarray,
+    threshold: int | float | tuple[int | float, int | float] = 0,
+    n_perm: int = 1000,
+    alpha: float = 0.05,
+    correction_method: str = "cluster",
+    min_cluster_size: int = 1,
+    resample_trials: int | None = None,
+    verbose: bool = False,
+) -> tuple[int | float | None, int]:
+    """Get earliest timepoint of motor onset prediction."""
+    if verbose:
+        print("Calculating earliest significant timepoint...")
+    if correction_method not in ["cluster", "cluster_pvals", "fdr"]:
+        raise ValueError(
+            f"`correction_method` must be one of either `cluster`,"
+            f" `cluster_pvals`, `fdr`. Got: {correction_method}."
+        )
+
+    if resample_trials is not None:
+        orig_trials = data.shape[0]
+        if orig_trials > resample_trials:
+            data = downsample_trials(data=data, n_samples=resample_trials)
+        elif orig_trials < resample_trials:
+            data = upsample_trials(data=data, n_samples=resample_trials)
+    trials_used = data.shape[0]
+    # For compatibility of different methods
+    data_t = data.T
+
+    threshold_value, _ = transform_threshold(
+        threshold=threshold, times=times, data=data_t
+    )
+    if correction_method == "cluster":
+        _, clusters_ind = pte_stats.cluster_analysis_1d(
+            data_a=data,
+            data_b=threshold_value,
+            alpha=alpha,
+            n_perm=n_perm,
+            only_max_cluster=False,
+            two_tailed=False,
+            min_cluster_size=min_cluster_size,
+        )
+        if len(clusters_ind) == 0:
+            return None, trials_used
+        cluster_count = len(clusters_ind)
+        clusters = np.zeros(data.shape[1], dtype=np.int32)
+        for ind in clusters_ind:
+            clusters[ind] = 1
+    elif correction_method in ["cluster_pvals", "fdr"]:
+        p_vals = pte_stats.timeseries_pvals(
+            x=data_t, y=threshold_value, n_perm=n_perm, two_tailed=False
+        )
+        clusters, cluster_count = pte_stats.clusters_from_pvals(
+            p_vals=p_vals,
+            alpha=alpha,
+            correction_method=correction_method,
+            n_perm=n_perm,
+            min_cluster_size=min_cluster_size,
+        )
+    else:
+        raise ValueError(
+            f"Invalid `correction_method`. Got: {correction_method}."
+            " Options: 'cluster_pvals', 'fdr', 'cluster'."
+        )
+
+    if cluster_count == 0:
+        if verbose:
+            print("No significant clusters found.")
+        return None, trials_used
+
+    index = np.where(clusters != 0)[0][0]
+    return times[index], trials_used
+
+
+def downsample_trials(data: np.ndarray, n_samples: int) -> np.ndarray:
+    """Choose `n_samples` prediction trials."""
+    n_orig = data.shape[0]
+    if n_orig <= n_samples:
+        return data
+    new_data = np.empty((n_samples, data.shape[1]))
+    random_choice = np.random.choice(
+        n_orig, size=n_samples, replace=True, p=None
+    )
+    for i, ind in enumerate(random_choice):
+        new_data[i] = data[ind]
+    return new_data
+
+
+def upsample_trials(data: np.ndarray, n_samples: int) -> np.ndarray:
+    """Upsample to `n_samples` prediction trials."""
+    n_orig = data.shape[0]
+    if n_orig >= n_samples:
+        return data
+    new_data = np.empty((n_samples, data.shape[1]))
+    new_data[:n_orig] = data
+    random_choice = np.random.choice(
+        n_orig, size=(n_samples - n_orig), replace=True, p=None
+    )
+    for i, ind in enumerate(random_choice):
+        new_data[n_orig + i] = data[ind]
+    return new_data
+
+
+def transform_threshold(
+    threshold: int | float | tuple[int | float, int | float],
+    data: np.ndarray,
+    times: np.ndarray | None = None,
+):
+    """Take threshold input and return threshold value and array."""
+    if isinstance(threshold, (int, float)):
+        threshold_value = threshold
+    else:
+        base_start, base_end = pte_stats.handle_baseline_bytimes(
+            baseline=threshold, times=times
+        )
+        threshold_value = np.mean(data[base_start:base_end])
+    threshold_array = np.ones(data.shape[0]) * threshold_value
+    return threshold_value, threshold_array
 
 
 def load_results_singlechannel(
@@ -145,8 +301,6 @@ def load_predictions(
     tmin: int | float | None = None,
     tmax: int | float | None = None,
     average_predictions: bool = False,
-    concatenate_runs: bool = True,
-    average_runs: bool = False,
 ) -> pd.DataFrame:
     """Load time-locked predictions."""
     df_list = []
@@ -167,25 +321,7 @@ def load_predictions(
             )
         df_list.append(data_single)
     data_all: pd.DataFrame = pd.concat(df_list)  # type: ignore
-    if concatenate_runs:
-        data_all = _concatenate_runs(data=data_all)
-    if average_runs:
-        data_all["Predictions"] = (
-            data_all["Predictions"]
-            .apply(np.mean, axis=0)
-            .apply(np.expand_dims, axis=0)
-        )
     return data_all
-
-
-def _concatenate_runs(data: pd.DataFrame) -> pd.DataFrame:
-    """Concatenate predictions from different runs in a single patient."""
-    data_list = []
-    for subject in data["Subject"].unique():
-        dat_sub = data[data["Subject"] == subject]
-        dat_concat = np.vstack(dat_sub["Predictions"].to_numpy())
-        data_list.append([subject, dat_concat])
-    return pd.DataFrame(data_list, columns=["Subject", "Predictions"])
 
 
 def load_predictions_singlefile(
@@ -198,7 +334,6 @@ def load_predictions_singlefile(
     tmax: int | float | None = None,
 ) -> pd.DataFrame:
     """Load time-locked predictions from single file."""
-    # parent_dir = Path(fpath).parent.name
     parent_dir = Path(file).parent.name
     items = parent_dir.split("_")
     items_kept = []
@@ -208,8 +343,8 @@ def load_predictions_singlefile(
         items_kept.append(item)
     filename = "_".join(items_kept)
     sub, med, stim = pte.filetools.sub_med_stim_from_fname(filename)
-    with open(file, "rb") as file:
-        pred_data = pickle.load(file)
+    with open(file, "rb") as in_file:
+        pred_data = pickle.load(in_file)
     predictions = np.stack(pred_data["predictions"], axis=0)
     times = np.array(pred_data["times"])
 
