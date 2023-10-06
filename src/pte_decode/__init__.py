@@ -15,9 +15,11 @@ from .features import (
 )
 from .plotting import (
     lineplot_prediction,
-    lineplot_prediction_compare,
+    lineplot_compare,
     lineplot_single,
-    violinplot_results,
+    boxplot_results,
+    boxplot_all_conds,
+    boxplot_updrs,
 )
 from .results import (
     get_earliest_timepoint,

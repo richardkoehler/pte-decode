@@ -1,11 +1,9 @@
 """Module for loading results from decoding experiments."""
 import json
 from pathlib import Path
-import pickle
 
 import mne_bids
 import numpy as np
-
 from numba import njit
 import pandas as pd
 
@@ -334,8 +332,8 @@ def load_predictions_singlefile(
     tmax: int | float | None = None,
 ) -> pd.DataFrame:
     """Load time-locked predictions from single file."""
-    parent_dir = Path(file).parent.name
-    items = parent_dir.split("_")
+    filename = Path(file).name
+    items = filename.split("_")
     items_kept = []
     for item in items:
         if item in ("eeg", "ieeg"):
@@ -343,44 +341,54 @@ def load_predictions_singlefile(
         items_kept.append(item)
     filename = "_".join(items_kept)
     sub, med, stim = pte.filetools.sub_med_stim_from_fname(filename)
-    with open(file, "rb") as in_file:
-        pred_data = pickle.load(in_file)
-    predictions = np.stack(pred_data["predictions"], axis=0)
-    times = np.array(pred_data["times"])
+    with open(file, "r", encoding="utf-8") as in_file:
+        pred_data = json.load(in_file)
+        
+    times = np.array(pred_data.pop("times"))
+    trial_ids = list(set(pred_data.pop("trial_ids")))
+    data_all = []
+    for channel, pred_single in pred_data.items():
+        if not pred_single:
+            continue
+        if channel == "predictions":
+            channel = "all"
+        predictions = np.stack(pred_single, axis=0)
 
-    base_start, base_end = pte_stats.handle_baseline_bytimes(
-        baseline=baseline, times=times
-    )
-    if baseline:
-        predictions = pte_stats.baseline_correct(
-            data=predictions,
-            baseline_mode=baseline_mode,
-            base_start=base_start,
-            base_end=base_end,
-            baseline_trialwise=baseline_trialwise,
+        base_start, base_end = pte_stats.handle_baseline_bytimes(
+            baseline=baseline, times=times
         )
+        if baseline:
+            predictions = pte_stats.baseline_correct(
+                data=predictions,
+                baseline_mode=baseline_mode,
+                base_start=base_start,
+                base_end=base_end,
+                baseline_trialwise=baseline_trialwise,
+            )
 
-    if any((tmin is not None, tmax is not None)):
-        predictions, times = _crop_predictions(
-            preds=predictions, times=times, tmin=tmin, tmax=tmax
-        )
-
+        if any((tmin is not None, tmax is not None)):
+            predictions, times = _crop_predictions(
+                preds=predictions, times=times, tmin=tmin, tmax=tmax
+            )
+        data_all.append(
+                (
+                    sub,
+                    med,
+                    stim,
+                    channel,
+                    trial_ids,
+                    times,
+                    predictions,
+                    filename,
+                ),
+                )
     data_final = pd.DataFrame(
-        data=(
-            (
-                sub,
-                med,
-                stim,
-                pred_data["trial_ids"],
-                times,
-                predictions,
-                filename,
-            ),
-        ),
+        data=data_all,
         columns=[
             "Subject",
             "Medication",
             "Stimulation",
+            "Channel",
             "trial_ids",
             "times",
             "Predictions",

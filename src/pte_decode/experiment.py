@@ -2,7 +2,6 @@
 import json
 from pathlib import Path
 from typing import Any, Literal, Sequence
-import pickle
 from dataclasses import dataclass, field
 
 import mne_bids
@@ -32,7 +31,7 @@ class _Results:
     scores: list = field(init=False, default_factory=list)
     predictions_epochs: dict = field(init=False, default_factory=dict)
     predictions_concat: dict = field(init=False, default_factory=dict)
-    feature_importances: list = field(init=False, default_factory=list)
+    feature_importances: list[float] = field(init=False, default_factory=list)
     path: Path = field(init=False)
     filename: str = field(init=False)
 
@@ -104,7 +103,7 @@ class _Results:
 
     def update_predictions_epochs(
         self,
-        data: list[list],
+        data: list[list[float]],
         ch_pick: str,
         trial_ids: np.ndarray,
     ) -> None:
@@ -113,7 +112,7 @@ class _Results:
             self.predictions_epochs[ch_pick].extend(data)
         else:
             self.predictions_epochs["predictions"].extend(data)
-        self.predictions_epochs["trial_ids"].extend(trial_ids)
+        self.predictions_epochs["trial_ids"].extend(trial_ids.tolist())
 
     def update_predictions_concat(
         self,
@@ -187,11 +186,11 @@ class _Results:
     def save_predictions_timelocked(self) -> None:
         """Save predictions time-locked to trial onset"""
         with open(
-            self.path / f"{self.filename}_PredTimelocked.pickle", "wb"
+            self.path / f"{self.filename}_PredTimelocked.json",
+            "w",
+            encoding="utf-8",
         ) as file:
-            pickle.dump(
-                self.predictions_epochs, file, protocol=pickle.HIGHEST_PROTOCOL
-            )
+            json.dump(self.predictions_epochs, file)
 
     def save_feature_importances(self) -> None:
         """Save feature importances"""
@@ -409,6 +408,7 @@ class DecodingExperiment:
             labels=labels_train,
             groups=groups_train,
         )
+        # print(f"{self.decoder.model.priors_ = }")
         predictions = self.decoder.predict(data=data_test)
 
         score = self.decoder.get_score(data_test, labels_test)
@@ -742,7 +742,9 @@ def run_pipeline(
         "rest_begin": rest_begin,
         "rest_end": rest_end,
     }
-    with open(out_path / f"{filename}_ParamsPipeline.json", "w") as f:
+    with open(
+        out_path / f"{filename}_ParamsPipeline.json", "w", encoding="utf-8"
+    ) as f:
         json.dump({k: params[k] for k in sorted(params)}, f, indent=4)
 
     features, label, plotting_target = pte_decode.FeatureCleaner(
@@ -783,7 +785,12 @@ def run_pipeline(
     )
 
     # Get feature epochs
-    (features_concat, features_timelocked, _, _,) = pte_decode.FeatureEpochs(
+    (
+        features_concat,
+        features_timelocked,
+        _,
+        _,
+    ) = pte_decode.FeatureEpochs(
         target_begin=target_begin,
         target_end=target_end,
         rest_begin=rest_begin,
@@ -845,11 +852,11 @@ def run_pipeline(
 def load_pynm_features(
     feature_root: Path | str, fpath: Path | str
 ) -> tuple[pd.DataFrame, list[str], list[str], int | float]:
-    from py_neuromodulation import (  # pylint: disable=import-outside-toplevel
-        nm_analysis,
-    )
+    from pte_neuromodulation import (
+        analysis,
+    )  # pylint: disable=import-outside-toplevel
 
-    nm_reader = nm_analysis.Feature_Reader(
+    nm_reader = analysis.Feature_Reader(
         feature_dir=str(feature_root), feature_file=str(fpath)
     )
 

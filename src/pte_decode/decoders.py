@@ -2,7 +2,8 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+import typing
+from typing import Any, Callable, Literal, Tuple
 import pickle
 from typing import Optional, Union
 
@@ -22,6 +23,7 @@ from sklearn.discriminant_analysis import (
     LinearDiscriminantAnalysis,
     QuadraticDiscriminantAnalysis,
 )
+import sklearn.covariance
 from sklearn.dummy import DummyClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import balanced_accuracy_score, log_loss
@@ -29,12 +31,26 @@ from sklearn.model_selection import GroupKFold, GroupShuffleSplit
 import xgboost as xgb
 
 
+BALANCING_METHODS = Literal[
+    None,
+    "oversample",
+    "undersample",
+    "balance_weights",
+    "smote",
+    "borderline_smote",
+    "adasyn",
+]
+VALID_BALANCING_METHODS: Tuple[BALANCING_METHODS, ...] = typing.get_args(
+    BALANCING_METHODS
+)
+
+
 @dataclass
 class Decoder(ABC):
     """Basic representation of class of machine learning decoders."""
 
     scoring: Callable
-    balancing: str | None = "oversample"
+    balancing: BALANCING_METHODS = None
     optimize: bool = False
     model: Any = field(init=False)
     data_train: pd.DataFrame = field(init=False)
@@ -95,9 +111,10 @@ class Decoder(ABC):
         eval_set = [(data_val, labels_val)]
         return data_train, labels_train, eval_set
 
-    @staticmethod
-    def _balance_samples(
-        data: np.ndarray, labels: np.ndarray, method: str = "oversample"
+    def balance_samples(
+        self,
+        data: np.ndarray,
+        labels: np.ndarray,
     ) -> tuple:
         """Balance class sizes to create equal class distributions.
 
@@ -123,35 +140,32 @@ class Decoder(ABC):
         sample_weight: numpy.ndarray of shape (n_samples, ) | None
             Sample weights if method = 'weight' else None
         """
-        balancing_methods = [
-            "oversample",
-            "smote",
-            "borderline_smote",
-            "adasyn",
-            "undersample",
-            "balance_weights",
-            True,
-            False,
-        ]
         sample_weight = None
-        if np.mean(labels) != 0.5:
-            if method == "oversample":
-                ros = RandomOverSampler(sampling_strategy="auto")
-                data, labels = ros.fit_resample(data, labels)
-            elif method == "smote":
-                ros = SMOTE(sampling_strategy="auto", k_neighbors=5)
-                data, labels = ros.fit_resample(data, labels)
-            elif method == "borderline_smote":
-                ros = BorderlineSMOTE(
+        if self.balancing is not None and np.mean(labels) != 0.5:
+            if self.balancing == "oversample":
+                resampler = RandomOverSampler(sampling_strategy="auto")
+                data, labels = resampler.fit_resample(data, labels)
+            elif self.balancing == "undersample":
+                resampler = RandomUnderSampler(sampling_strategy="auto")
+                data, labels = resampler.fit_resample(data, labels)
+            elif self.balancing == "balance_weights":
+                sample_weight = compute_sample_weight(
+                    class_weight="balanced", y=labels
+                )
+            elif self.balancing == "smote":
+                resampler = SMOTE(sampling_strategy="auto", k_neighbors=5)
+                data, labels = resampler.fit_resample(data, labels)
+            elif self.balancing == "borderline_smote":
+                resampler = BorderlineSMOTE(
                     sampling_strategy="auto",
                     k_neighbors=5,
                     kind="borderline-1",
                 )
-                data, labels = ros.fit_resample(data, labels)
-            elif method == "adasyn":
+                data, labels = resampler.fit_resample(data, labels)
+            elif self.balancing == "adasyn":
                 try:
-                    ros = ADASYN(sampling_strategy="auto", n_neighbors=5)
-                    data, labels = ros.fit_resample(data, labels)
+                    resampler = ADASYN(sampling_strategy="auto", n_neighbors=5)
+                    data, labels = resampler.fit_resample(data, labels)
                 except ValueError as error:
                     if len(error.args) > 0 and error.args[0] == (
                         "No samples will be generated with the provided "
@@ -160,15 +174,10 @@ class Decoder(ABC):
                         pass
                     else:
                         raise error
-            elif method == "undersample":
-                ros = RandomUnderSampler(sampling_strategy="auto")
-                data, labels = ros.fit_resample(data, labels)
-            elif method == "weight":
-                sample_weight = compute_sample_weight(
-                    class_weight="balanced", y=labels
-                )
             else:
-                raise BalancingMethodNotFoundError(method, balancing_methods)
+                raise BalancingMethodNotFoundError(
+                    self.balancing, VALID_BALANCING_METHODS
+                )
         return data, labels, sample_weight
 
 
@@ -202,7 +211,7 @@ class BalancingMethodNotFoundError(Exception):
 def get_decoder(
     classifier: str = "lda",
     scoring: str = "balanced_accuracy",
-    balancing: Optional[str] = None,
+    balancing: str | None = None,
     optimize: bool = False,
 ) -> Decoder:
     """Create and return Decoder of desired type.
@@ -361,9 +370,7 @@ class CATB(Decoder):
             self.data_train,
             self.labels_train,
             sample_weight,
-        ) = self._balance_samples(
-            self.data_train, self.labels_train, self.balancing
-        )
+        ) = self.balance_samples(self.data_train, self.labels_train)
 
         self.model.fit(
             self.data_train,
@@ -429,14 +436,18 @@ class CATB(Decoder):
             )
             groups_tr = self.groups_train[train_index]
 
-            (data_train_, y_tr, eval_set_inner,) = self._get_validation_split(
+            (
+                data_train_,
+                y_tr,
+                eval_set_inner,
+            ) = self._get_validation_split(
                 data=data_train_,
                 labels=y_tr,
                 groups=groups_tr,
                 train_size=0.8,
             )
-            data_train_, y_tr, sample_weight = self._balance_samples(
-                data_train_, y_tr, self.balancing
+            data_train_, y_tr, sample_weight = self.balance_samples(
+                data_train_, y_tr
             )
             inner_model = catboost.CatBoostClassifier(
                 iterations=100,
@@ -469,12 +480,12 @@ class LDA(Decoder):
     """Class for applying Linear Discriminant Analysis using scikit-learn."""
 
     def __post_init__(self):
-        if self.balancing == "balance_weights":
-            raise ValueError(
-                "Sample weights cannot be balanced for Linear "
-                "Discriminant Analysis. Please set `balance_weights` to"
-                "either `oversample`, `undersample` or `None`."
-            )
+        # if self.balancing == "balance_weights":
+        #     raise ValueError(
+        #         "Sample weights cannot be balanced for Linear "
+        #         "Discriminant Analysis. Please set `balance_weights` to"
+        #         "either `oversample`, `undersample` or `None`."
+        #     )
         if self.optimize:
             raise ValueError(
                 "Hyperparameter optimization cannot be performed for this"
@@ -489,11 +500,22 @@ class LDA(Decoder):
         groups: np.ndarray,
     ):
         """Fit model to given training data and training labels."""
-        self.data_train, self.labels_train, _ = self._balance_samples(
-            data_train, labels, self.balancing
-        )
+        (
+            self.data_train,
+            self.labels_train,
+            _,
+        ) = self.balance_samples(data_train, labels)
+        if self.balancing == "balance_weights":
+            priors = [0.5, 0.5]
+        else:
+            priors = None
         self.model = LinearDiscriminantAnalysis(
-            solver="lsqr", shrinkage="auto"
+            solver="lsqr",
+            priors=priors,
+            # covariance_estimator=sklearn.covariance.OAS(
+            #     store_precision=False, assume_centered=False
+            # )
+            shrinkage="auto",
         )
         self.model.fit(self.data_train, self.labels_train)
 
@@ -527,8 +549,8 @@ class LR(Decoder):
         else:
             self.model = LogisticRegression(solver="newton-cg")
 
-        self.data_train, self.labels_train, _ = self._balance_samples(
-            data_train, labels, self.balancing
+        self.data_train, self.labels_train, _ = self.balance_samples(
+            data_train, labels
         )
 
         self.model.fit(self.data_train, self.labels_train)
@@ -566,8 +588,8 @@ class LR(Decoder):
                 self.labels_train[train_index],
                 self.labels_train[test_index],
             )
-            data_train_, y_tr, sample_weight = self._balance_samples(
-                data_train_, y_tr, self.balancing
+            data_train_, y_tr, sample_weight = self.balance_samples(
+                data_train_, y_tr
             )
             inner_model = LogisticRegression(
                 solver="newton-cg", C=C, max_iter=500
@@ -592,8 +614,8 @@ class Dummy(Decoder):
         groups: pd.Series,
     ) -> np.ndarray:
         """Fit model to given training data and training labels."""
-        self.data_train, self.labels_train, _ = self._balance_samples(
-            data_train, labels, self.balancing
+        self.data_train, self.labels_train, _ = self.balance_samples(
+            data_train, labels
         )
         self.model = DummyClassifier(strategy="uniform")
         self.model.fit(self.data_train, self.labels_train)
@@ -634,8 +656,8 @@ class QDA(Decoder):
         groups: pd.Series,
     ) -> None:
         """Fit model to given training data and training labels."""
-        self.data_train, self.labels_train, _ = self._balance_samples(
-            data_train, labels, self.balancing
+        self.data_train, self.labels_train, _ = self.balance_samples(
+            data_train, labels
         )
         self.model = QuadraticDiscriminantAnalysis()
         self.model.fit(self.data_train, self.labels_train)
@@ -684,9 +706,7 @@ class XGB(Decoder):
             self.data_train,
             self.labels_train,
             sample_weight,
-        ) = self._balance_samples(
-            data=data_train, labels=labels, method=self.balancing
-        )
+        ) = self.balance_samples(data=data_train, labels=labels)
 
         self.model.fit(
             self.data_train,
@@ -698,7 +718,7 @@ class XGB(Decoder):
         )
         return self.model.predict(data_test)
 
-    def _bayesian_optimization(self):
+    def _bayesian_optimization(self) -> xgb.XGBClassifier:
         """Estimate optimal model parameters using bayesian optimization."""
         optimizer = BayesianOptimization(
             self._bo_tune,
@@ -746,15 +766,21 @@ class XGB(Decoder):
             )
             groups_tr = self.groups_train[train_index]
 
-            (data_train_, y_tr, eval_set_inner,) = self._get_validation_split(
+            (
+                data_train_,
+                y_tr,
+                eval_set_inner,
+            ) = self._get_validation_split(
                 data=data_train_,
                 labels=y_tr,
                 groups=groups_tr,
                 train_size=0.8,
             )
-            (data_train_, y_tr, sample_weight,) = self._balance_samples(
-                data=data_train_, labels=y_tr, method=self.balancing
-            )
+            (
+                data_train_,
+                y_tr,
+                sample_weight,
+            ) = self.balance_samples(data=data_train_, labels=y_tr)
             inner_model = xgb.XGBClassifier(
                 objective="binary:logistic",
                 booster="gbtree",

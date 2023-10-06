@@ -1,6 +1,6 @@
 """Module for extracting event-based features for decoding."""
 import gzip
-import pickle
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Sequence
@@ -112,10 +112,11 @@ class FeatureEpochs:
                 index=False,
             )
             with gzip.open(
-                out_path / f"{out_path.stem}_FeaturesTimelocked.pickle.gz",
-                "wb",
+                out_path / f"{out_path.stem}_FeaturesTimelocked.json.gz",
+                "wt",
+                encoding="utf-8",
             ) as file:
-                pickle.dump(features_timelocked, file)
+                json.dump(features_timelocked, file)
 
         return (
             features_concatenated,
@@ -148,7 +149,7 @@ class FeatureEpochs:
             "plotting_target": [],
             "features": {column: [] for column in features.columns},
         }
-        for trial_id in trial_ids_used:
+        for trial_id in trial_ids_used.tolist():
             features_epoch = _get_prediction_epochs(
                 data=features.values,
                 trial_onsets=trial_onsets,
@@ -188,7 +189,7 @@ def _get_prediction_epochs(
     trial_id: int,
     ind_begin: int,
     ind_end: int,
-    dtype: npt.DTypeLike = np.float32,
+    dtype: npt.DTypeLike = np.float64,
     verbose: bool = False,
 ) -> np.ndarray:
     """Get epochs of data for making predictions."""
@@ -205,14 +206,15 @@ def _get_prediction_epochs(
     return np.atleast_1d([])
 
 
-def _convert_target_end(target_end) -> int | float | str:
-    if isinstance(target_end, str):
-        if target_end == "trial_onset":
-            return "trial_onset"
-        if target_end == "trial_onset":
-            return 0.0
+def _convert_target_end(
+    target_end,
+) -> int | float | Literal["trial_onset", "trial_end"]:
+    if not isinstance(target_end, (int, float)) and target_end not in [
+        "trial_onset",
+        "trial_end",
+    ]:
         raise ValueError(
-            "If target_end is a string, it must be "
+            "target_end must be an integer, a float or either "
             f"`trial_onset` or `trial_end`. Got: {target_end}."
         )
     return target_end
@@ -286,7 +288,7 @@ def _get_trial_data(
     trial_onset: int,
     trial_end: int,
     target_begin: int,
-    target_end: int | str,
+    target_end: Literal["trial_onset", "trial_end"] | str,
     rest_begin: int,
     rest_end: int,
     dtype: Any,
@@ -324,7 +326,9 @@ def _get_trial_data(
 
 
 def _handle_target_end(
-    target_end: int | str, trial_onset: int, trial_end: int
+    target_end: int | Literal["trial_onset", "trial_end"],
+    trial_onset: int,
+    trial_end: int,
 ) -> int:
     """Handle different cases of target_end"""
     if isinstance(target_end, int):
@@ -350,11 +354,9 @@ def _get_features_concatenated(
     rest_end: int | float,
     offset_rest_begin: int | float,
     bad_epochs: np.ndarray | None,
-    dtype: Any = np.float32,
+    dtype: Any = np.float64,
 ) -> tuple[pd.DataFrame, np.ndarray, np.ndarray,]:
     """Get data by trials."""
-    data_arr = data.values
-
     offset_begin = int(offset_rest_begin * sfreq)
     rest_begin = int(rest_begin * sfreq)
     rest_end = int(rest_end * sfreq)
@@ -392,7 +394,7 @@ def _get_features_concatenated(
             trial_ids_discarded.append(trial_id)
         else:
             data_rest, data_target, time_abs, time_rel = _get_trial_data(
-                data=data_arr,
+                data=data.values,
                 sfreq=sfreq,
                 trial_onset=trial_onset,
                 trial_end=trial_end,
