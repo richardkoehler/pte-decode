@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 import matplotlib as mpl
-from matplotlib import axes, cm, collections, figure, patheffects
+from matplotlib import axes, collections, figure, patheffects
 from matplotlib import pyplot as plt
 import scipy.stats
 from statannotations import Annotator

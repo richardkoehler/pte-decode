@@ -1,4 +1,5 @@
 """Module for loading results from decoding experiments."""
+from collections.abc import Sequence
 import json
 from pathlib import Path
 
@@ -292,7 +293,7 @@ def _load_labels_single(
 
 
 def load_predictions(
-    files: list[Path | str],
+    files: Sequence[Path | str],
     baseline: tuple[int | float | None, int | float | None] | None = None,
     baseline_mode: str = "zscore",
     baseline_trialwise: bool = False,
@@ -343,7 +344,7 @@ def load_predictions_singlefile(
     sub, med, stim = pte.filetools.sub_med_stim_from_fname(filename)
     with open(file, "r", encoding="utf-8") as in_file:
         pred_data = json.load(in_file)
-        
+
     times = np.array(pred_data.pop("times"))
     trial_ids = list(set(pred_data.pop("trial_ids")))
     data_all = []
@@ -371,17 +372,17 @@ def load_predictions_singlefile(
                 preds=predictions, times=times, tmin=tmin, tmax=tmax
             )
         data_all.append(
-                (
-                    sub,
-                    med,
-                    stim,
-                    channel,
-                    trial_ids,
-                    times,
-                    predictions,
-                    filename,
-                ),
-                )
+            (
+                sub,
+                med,
+                stim,
+                channel,
+                trial_ids,
+                times,
+                predictions,
+                filename,
+            ),
+        )
     data_final = pd.DataFrame(
         data=data_all,
         columns=[
