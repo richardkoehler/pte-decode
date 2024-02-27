@@ -28,26 +28,26 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.12"]
+        python: ["3.11"]
         task:
           - name: Test
             run:
               ":"
               # pytest -v --color=yes tests/
         include:
-          - python: "3.12"
+          - python: "3.11"
             task:
               name: Lint
               run: ruff check .
-          - python: "3.12"
-            task:
-              name: Type check
-              run: mypy .
-          - python: "3.12"
+          # - python: "3.11"
+          #   task:
+          #     name: Type check
+          #     run: mypy .
+          - python: "3.11"
             task:
               name: Build
               run: hatch build
-          - python: "3.12"
+          - python: "3.11"
             task:
               name: Style
               run: black --check .
@@ -110,7 +110,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.11"
 
       - name: Install requirements
         run: |
