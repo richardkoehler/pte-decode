@@ -34,10 +34,10 @@ To activate the environment then type:
 conda activate pte-decode
 ```
 
-Finally, to install PTE Decode in an editable development version inside your conda environment type the following inside the PTE Decode root directory:
+Finally, to install PTE Decode in an editable development version inside your  environment type the following inside the PTE Decode root directory:
 
 ```bash
-conda develop .
+pip install -e .
 ```
 
 ## Usage

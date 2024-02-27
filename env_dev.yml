@@ -1,28 +1,8 @@
 name: pte-decode-dev
 channels:
   - conda-forge
-  - defaults
 dependencies:
-  # basic dependencies
-  - bayesian-optimization
-  - catboost
-  - imbalanced-learn
-  - matplotlib
-  - mne-bids
-  - numba
-  - numpy
-  - pandas
   - pip
-  - python == 3.10
-  - scikit-learn
-  - scipy
-  - seaborn
-  - xgboost
+  - python>=3.10
   - pip:
-    - pte-stats
-    - statannotations 
-  # development dependencies
-  - black
-  - isort
-  - pylint
-  - pytest
+      - -e .[dev]
