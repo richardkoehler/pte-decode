@@ -1,20 +1,22 @@
 """Module for plotting decoding results."""
+
+from collections.abc import Callable, Iterable, Sequence
 from itertools import combinations, product
 from pathlib import Path
-from typing import Callable, Iterable, Literal, Sequence
+from typing import Literal
 
+import matplotlib as mpl
 import numpy as np
 import pandas as pd
+import pte_stats
+import scipy.stats
 import seaborn as sns
-import matplotlib as mpl
 from matplotlib import axes, collections, figure, patheffects
 from matplotlib import pyplot as plt
-import scipy.stats
 from statannotations import Annotator
 from statannotations.stats import StatTest
 
 import pte_decode
-import pte_stats
 
 
 def boxplot_all_conds(
@@ -238,10 +240,7 @@ def boxplot_results(
     new_xlabels = [xtick.replace(" ", "\n") for xtick in xlabels]
     ax.set_xticklabels(new_xlabels)
     if title is not None:
-        if stat_test:
-            y_coord = 1.15
-        else:
-            y_coord = 1.02
+        y_coord = 1.15 if stat_test else 1.02
         ax.set_title(title, y=y_coord)
 
     if add_lines:
@@ -526,13 +525,7 @@ def lineplot_prediction(
     """Plot averaged time-locked predictions including statistical tests."""
     colors = mpl.rcParams["axes.prop_cycle"].by_key()["color"]
 
-    if x_2 is not None:
-        if compare_x1x2:
-            nrows = 3
-        else:
-            nrows = 2
-    else:
-        nrows = 1
+    nrows = (3 if compare_x1x2 else 2) if x_2 is not None else 1
 
     fig, axs = plt.subplots(
         ncols=1,
@@ -724,8 +717,8 @@ def _pval_correction_lineplot(
     min_cluster_size: int = 2,
     color_signif: str | tuple[float, float, float] = "lightgrey",
 ) -> list[tuple[float, float]]:
-    """Perform p-value correction for singe lineplot."""
-    cluster_times = []
+    """Perform p-value correction for single lineplot."""
+    cluster_times: list[tuple[float, float]] = []
     if onesample_xy:
         data_a = x - y
         data_b = 0.0
@@ -773,15 +766,12 @@ def _pval_correction_lineplot(
     if cluster_count <= 0:
         print("No clusters found.")
         return cluster_times
-    if isinstance(y, (int, float)):
+    if isinstance(y, int | float):
         y_arr = np.ones((x.shape[0], 1))
         y_arr[:, 0] = y
     else:
         y_arr = y
-    if onesample_xy:
-        x_arr = x
-    else:
-        x_arr = data_a
+    x_arr = x if onesample_xy else data_a
     label = f"P ≤ {alpha}"
     x_labels = times.round(2)
     text_annotated = False

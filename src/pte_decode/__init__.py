@@ -14,17 +14,17 @@ from .features import (
     FeatureSelector,
 )
 from .plotting import (
-    lineplot_prediction,
-    lineplot_compare,
-    lineplot_single,
-    boxplot_results,
     boxplot_all_conds,
+    boxplot_results,
     boxplot_updrs,
+    lineplot_compare,
+    lineplot_prediction,
+    lineplot_single,
 )
 from .results import (
     get_earliest_timepoint,
     load_predictions,
     load_predictions_singlefile,
-    load_scores,
     load_results_singlechannel,
+    load_scores,
 )

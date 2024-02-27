@@ -1,16 +1,18 @@
 """Define abstract base classes to construct Model classes."""
+
+import pickle
+import typing
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-import typing
-from typing import Any, Callable, Literal, Tuple
-import pickle
-from typing import Optional, Union
+from typing import Any, Literal
 
-from bayes_opt import BayesianOptimization
 import catboost
 import numpy as np
 import pandas as pd
+import xgboost as xgb
+from bayes_opt import BayesianOptimization
 from imblearn.over_sampling import (
     ADASYN,
     SMOTE,
@@ -18,18 +20,15 @@ from imblearn.over_sampling import (
     RandomOverSampler,
 )
 from imblearn.under_sampling import RandomUnderSampler
-from sklearn.utils.class_weight import compute_sample_weight
 from sklearn.discriminant_analysis import (
     LinearDiscriminantAnalysis,
     QuadraticDiscriminantAnalysis,
 )
-import sklearn.covariance
 from sklearn.dummy import DummyClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import balanced_accuracy_score, log_loss
 from sklearn.model_selection import GroupKFold, GroupShuffleSplit
-import xgboost as xgb
-
+from sklearn.utils.class_weight import compute_sample_weight
 
 BALANCING_METHODS = Literal[
     None,
@@ -40,7 +39,7 @@ BALANCING_METHODS = Literal[
     "borderline_smote",
     "adasyn",
 ]
-VALID_BALANCING_METHODS: Tuple[BALANCING_METHODS, ...] = typing.get_args(
+VALID_BALANCING_METHODS: tuple[BALANCING_METHODS, ...] = typing.get_args(
     BALANCING_METHODS
 )
 
@@ -123,7 +122,7 @@ class Decoder(ABC):
         data : numpy.ndarray of shape (n_features, n_samples)
             Data or features.
         labels : numpy.ndarray of shape (n_samples, )
-            Array of class disribution
+            Array of class distribution
         method : {'oversample', 'undersample', 'weight'}
             Method to be used for rebalancing classes. 'oversample' will
             upsample the class with less samples. 'undersample' will
@@ -231,7 +230,7 @@ def get_decoder(
     Returns
     -------
     Decoder
-        Instance of Decoder given `classifer` and `balancing` method.
+        Instance of Decoder given `classifier` and `balancing` method.
     """
     classifiers = {
         "catboost": CATB,
@@ -334,7 +333,7 @@ class CATB(Decoder):
 
     def fit_and_predict(
         self,
-        data_train: Union[pd.DataFrame, pd.Series],
+        data_train: pd.DataFrame,
         data_test: pd.DataFrame,
         labels: np.ndarray,
         groups: np.ndarray,
@@ -495,7 +494,7 @@ class LDA(Decoder):
 
     def fit(
         self,
-        data_train: np.ndarray,
+        data_train: pd.DataFrame,
         labels: np.ndarray,
         groups: np.ndarray,
     ):
@@ -505,10 +504,7 @@ class LDA(Decoder):
             self.labels_train,
             _,
         ) = self.balance_samples(data_train, labels)
-        if self.balancing == "balance_weights":
-            priors = [0.5, 0.5]
-        else:
-            priors = None
+        priors = [0.5, 0.5] if self.balancing == "balance_weights" else None
         self.model = LinearDiscriminantAnalysis(
             solver="lsqr",
             priors=priors,
@@ -534,7 +530,7 @@ class LR(Decoder):
 
     def fit_and_predict(
         self,
-        data_train: np.ndarray,
+        data_train: pd.DataFrame,
         data_test: pd.DataFrame,
         labels: np.ndarray,
         groups,
@@ -608,7 +604,7 @@ class Dummy(Decoder):
 
     def fit_and_predict(
         self,
-        data_train: np.ndarray,
+        data_train: pd.DataFrame,
         data_test: pd.DataFrame,
         labels: np.ndarray,
         groups: pd.Series,
@@ -650,7 +646,7 @@ class QDA(Decoder):
 
     def fit_and_predict(
         self,
-        data_train: np.ndarray,
+        data_train: pd.DataFrame,
         labels: np.ndarray,
         data_test: pd.DataFrame,
         groups: pd.Series,

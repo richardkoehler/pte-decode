@@ -1,15 +1,15 @@
 """Module for running decoding experiments."""
+
 import json
-from pathlib import Path
-from typing import Any, Literal, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Literal
 
 import mne_bids
 import numpy as np
-
 import pandas as pd
 import pte
-import pte_decode
 from joblib import Parallel, delayed
 from sklearn.inspection import permutation_importance
 from sklearn.metrics import balanced_accuracy_score
@@ -18,6 +18,8 @@ from sklearn.model_selection import (
     GroupKFold,
     LeaveOneGroupOut,
 )
+
+import pte_decode
 
 
 @dataclass
@@ -54,7 +56,7 @@ class _Results:
         self,
     ) -> dict:
         """Initialize dictionary of timelocked predictions."""
-        epochs = {
+        epochs: dict[str, list] = {
             "times": self.times_epochs,
             "trial_ids": [],
         }
@@ -299,7 +301,7 @@ class DecodingExperiment:
     def _init_results(self) -> _Results:
         """Initialize results container."""
 
-        save_importances = False if not self.feature_importance else True
+        save_importances = bool(self.feature_importance)
         return _Results(
             ch_names=self.ch_names,
             use_channels=self.channels_used,
@@ -486,9 +488,10 @@ class DecodingExperiment:
             return self.features.columns.tolist()
         col_picks = []
         for column in self.features.columns:
-            if channel_pick in column:
-                if any(ch_name in column for ch_name in self.ch_names):
-                    col_picks.append(column)
+            if channel_pick in column and any(
+                ch_name in column for ch_name in self.ch_names
+            ):
+                col_picks.append(column)
         return col_picks
 
     def _update_results(
@@ -544,7 +547,7 @@ class DecodingExperiment:
         groups: pd.Series,
     ) -> list[str]:
         """Run inner cross-validation and return best ECOG and LFP channel."""
-        results = {ch_name: [] for ch_name in self.ch_names}
+        results: dict[str, list] = {ch_name: [] for ch_name in self.ch_names}
         for train_ind, test_ind in self.cv_inner.split(
             features, labels, groups
         ):
@@ -852,9 +855,9 @@ def run_pipeline(
 def load_pynm_features(
     feature_root: Path | str, fpath: Path | str
 ) -> tuple[pd.DataFrame, list[str], list[str], int | float]:
-    from pte_neuromodulation import (
+    from py_neuromodulation import (
         analysis,
-    )  # pylint: disable=import-outside-toplevel
+    )
 
     nm_reader = analysis.Feature_Reader(
         feature_dir=str(feature_root), feature_file=str(fpath)
@@ -880,10 +883,12 @@ def _handle_exception_files(
     exception_keywords: Sequence[str] | None = None,
 ) -> int | float:
     """Check if current file is listed in exception files."""
-    if exception_keywords:
-        if any(keyw in str(fname) for keyw in exception_keywords):
-            print("Exception file recognized: ", Path(fname).name)
-            return excep_dist_end
+    fname_str = str(fname)
+    if exception_keywords and any(
+        keyw in fname_str for keyw in exception_keywords
+    ):
+        print("Exception file recognized: ", Path(fname).name)
+        return excep_dist_end
     return dist_end
 
 

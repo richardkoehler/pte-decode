@@ -41,8 +41,10 @@ dependencies = [
   "pte-stats>=0.3",
   "scikit-learn",
   "scipy",
+  "seaborn",
   "statannotations",
   "xgboost",
+  "py-neuromodulation @ git+https://github.com/richardkoehler/py_neuromodulation.git@563ee46d66937ac25ddcb9e6d6350bfa5fbb397d",
 ]
 
 [project.optional-dependencies]
@@ -63,32 +65,38 @@ line-length = 79
 
 [tool.hatch]
 version.path = "src/pte_decode/__init__.py"
+metadata.allow-direct-references = true
 
 [[tool.mypy.overrides]]
-ignore_missing_imports = true
 module = [
+  "bayes_opt",
+  "catboost",
+  "imblearn.*",
   "joblib",
   "matplotlib",
-  "matplotlib.figure",
+  "matplotlib.*",
   "mne",
   "mne_bids",
-  "mne_bids.copyfiles",
-  "mne_bids.path",
+  "mne_bids.*",
   "mpl_toolkits.axes_grid1",
   "numba",
   "numpy",
   "pandas",
   "plotly",
+  "pte",
+  "py_neuromodulation",
   "pte_stats",
-  "pybv",
   "scipy",
-  "scipy.io",
-  "scipy.ndimage",
-  "scipy.signal",
-  "scipy.stats",
+  "scipy.*",
+  "seaborn",
   "skimage",
+  "sklearn.*",
+  "statannotations",
+  "statannotations.*",
   "statsmodels.stats.multitest",
+  "xgboost",
 ]
+ignore_missing_imports = true
 
 [tool.ruff]
 line-length = 79
@@ -109,5 +117,5 @@ select = [
   "I",
 ]
 
-[tool.ruff.per-file-ignores]
+[tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401", "F403"]

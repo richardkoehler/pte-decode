@@ -1,9 +1,11 @@
 """Module for extracting event-based features for decoding."""
+
 import gzip
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, Sequence
+from typing import Any, Literal
 
 import numpy as np
 import numpy.typing as npt
@@ -209,7 +211,7 @@ def _get_prediction_epochs(
 def _convert_target_end(
     target_end,
 ) -> int | float | Literal["trial_onset", "trial_end"]:
-    if not isinstance(target_end, (int, float)) and target_end not in [
+    if not isinstance(target_end, int | float) and target_end not in [
         "trial_onset",
         "trial_end",
     ]:
@@ -252,7 +254,7 @@ def _events_from_label(
     if data[-1] != 0:
         label_diff[-1] = -1
     trials = np.nonzero(label_diff)[0]
-    # Check for plausability of events
+    # Check for plausibility of events
     if len(trials) % 2:
         raise ValueError(
             "Number of events found is odd. Please check your label data."
@@ -355,25 +357,28 @@ def _get_features_concatenated(
     offset_rest_begin: int | float,
     bad_epochs: np.ndarray | None,
     dtype: Any = np.float64,
-) -> tuple[pd.DataFrame, np.ndarray, np.ndarray,]:
+) -> tuple[
+    pd.DataFrame,
+    np.ndarray,
+    np.ndarray,
+]:
     """Get data by trials."""
     offset_begin = int(offset_rest_begin * sfreq)
     rest_begin = int(rest_begin * sfreq)
     rest_end = int(rest_end * sfreq)
     target_begin = int(target_begin * sfreq)
 
-    if isinstance(target_end, (int, float)):
+    if isinstance(target_end, int | float):
         target_end = int(target_end * sfreq)
-
+    features: list = []
+    labels: list = []
     (
-        features,
-        labels,
         trial_ids,
         times,
         times_relative,
         trial_ids_used,
         trial_ids_discarded,
-    ) = ([], [], [], [], [], [], [])
+    ) = ([], [], [], [], [])
 
     for trial_id, (trial_onset, trial_end) in enumerate(
         zip(trial_onsets, trial_ends, strict=True)
@@ -499,7 +504,7 @@ class FeatureEngineer:
             )
         ]
         # Use additional features from previous time points
-        # ``use_times = 1`` means no features from previous time points are used
+        # `use_times = 1` means no features from previous time points are used
         for use_time in np.arange(1, self.use_times):
             feat_new = features.shift(use_time, axis=0).rename(
                 columns={
@@ -638,7 +643,9 @@ def _transform_side(side: Literal["right", "left"]) -> str:
 
 
 def _init_channel_names(
-    ch_names: list, use_channels: str, side: str | None = None
+    ch_names: list,
+    use_channels: str,
+    side: Literal["right", "left"] | None = None,
 ) -> list:
     """Initialize channels to be used."""
     case_all = ["single", "single_best", "all"]

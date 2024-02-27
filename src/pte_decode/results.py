@@ -1,15 +1,15 @@
 """Module for loading results from decoding experiments."""
-from collections.abc import Sequence
+
 import json
+from collections.abc import Sequence
 from pathlib import Path
 
 import mne_bids
 import numpy as np
-from numba import njit
 import pandas as pd
-
 import pte
 import pte_stats
+from numba import njit
 
 
 @njit
@@ -155,7 +155,7 @@ def transform_threshold(
     times: np.ndarray | None = None,
 ):
     """Take threshold input and return threshold value and array."""
-    if isinstance(threshold, (int, float)):
+    if isinstance(threshold, int | float):
         threshold_value = threshold
     else:
         base_start, base_end = pte_stats.handle_baseline_bytimes(
@@ -260,7 +260,7 @@ def _load_labels_single(
     """Load time-locked predictions from single file."""
     sub, med, stim = pte.filetools.sub_med_stim_from_fname(fpath)
 
-    with open(fpath, "r", encoding="utf-8") as file:
+    with open(fpath, encoding="utf-8") as file:
         data = json.load(file)
 
     label_name = data["TargetName"]
@@ -325,8 +325,10 @@ def load_predictions(
 
 def load_predictions_singlefile(
     file: str | Path,
-    baseline: tuple[int | float | None, int | float | None]
-    | None = (None, None),
+    baseline: tuple[int | float | None, int | float | None] | None = (
+        None,
+        None,
+    ),
     baseline_mode: str = "zscore",
     baseline_trialwise: bool = False,
     tmin: int | float | None = None,
@@ -342,7 +344,7 @@ def load_predictions_singlefile(
         items_kept.append(item)
     filename = "_".join(items_kept)
     sub, med, stim = pte.filetools.sub_med_stim_from_fname(filename)
-    with open(file, "r", encoding="utf-8") as in_file:
+    with open(file, encoding="utf-8") as in_file:
         pred_data = json.load(in_file)
 
     times = np.array(pred_data.pop("times"))
