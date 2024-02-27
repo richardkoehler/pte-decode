@@ -1,6 +1,6 @@
 """Package for decoding of neurophysiology data."""
 
-__version__ = "0.1.0"
+__version__ = "0.1.0dev1"
 
 from .decoders import Decoder, get_decoder
 from .experiment import (

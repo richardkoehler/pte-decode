@@ -12,11 +12,13 @@ classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
   "Topic :: Software Development :: Libraries :: Python Modules",
   "Topic :: Scientific/Engineering",
   "Typing :: Typed",
 ]
-description = "an open-source software package for neural decoding. ."
+description = "An open-source software package for neural decoding."
 dynamic = ["version"]
 keywords = ["machine learning", "bci", "eeg", "ieeg", "neurophysiology"]
 license = { file = "LICENSE" }
@@ -84,8 +86,8 @@ module = [
   "pandas",
   "plotly",
   "pte",
-  "py_neuromodulation",
   "pte_stats",
+  "py_neuromodulation",
   "scipy",
   "scipy.*",
   "seaborn",
