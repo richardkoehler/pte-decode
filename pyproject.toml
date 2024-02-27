@@ -1,26 +1,28 @@
 [build-system]
-build-backend = "flit_core.buildapi"
-requires = ["flit_core >=3.5,<4"]
+build-backend = "hatchling.build"
+requires = ["hatchling"]
 
 [project]
-authors = [
-  {name = "Richard M. Köhler"},
-]
+authors = [{ name = "Richard M. Köhler" }]
 classifiers = [
-  "Development Status :: 2 - Pre-Alpha",
+  "Intended Audience :: Developers",
   "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Python :: 3.10",
   "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: Scientific/Engineering",
+  "Typing :: Typed",
 ]
 description = "an open-source software package for neural decoding. ."
 dynamic = ["version"]
-keywords = ["machine learning", "bci", "eeg", "ieeg"]
-license = {file = "LICENSE"}
-maintainers = [
-  {name = "Richard M. Köhler"},
-]
+keywords = ["machine learning", "bci", "eeg", "ieeg", "neurophysiology"]
+license = { file = "LICENSE" }
+maintainers = [{ name = "Richard M. Köhler" }]
 name = "pte-decode"
-readme = {file = "README.md", content-type = "text/markdown"}
+readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.10"
 
 dependencies = [
@@ -29,66 +31,91 @@ dependencies = [
   "imbalanced-learn",
   "joblib",
   "matplotlib",
-  "mne",
+  "mne>=1.0",
   "mne-bids",
   "numba",
   "numpy",
   "pandas",
   "pip",
   "pte",
-  "pte-stats",
+  "pte-stats>=0.3",
   "scikit-learn",
   "scipy",
+  "seaborn",
   "statannotations",
   "xgboost",
+  "py-neuromodulation @ git+https://github.com/richardkoehler/py_neuromodulation.git@563ee46d66937ac25ddcb9e6d6350bfa5fbb397d",
 ]
 
 [project.optional-dependencies]
 dev = [
   "black",
-  "isort",
+  "hatch",
   "mypy",
-  "pylint",
+  "packaging",
+  "pre-commit",
   "pytest",
   "pytest-cov",
+  "ruff",
+  "tox",
 ]
-
-[project.urls]
-bugtracker = "https://github.com/richardkoehler/pte-decode/issues"
-changelog = "https://github.com/richardkoehler/pte-decode/blob/main/doc/CHANGELOG.md"
-repository = "https://github.com/richardkoehler/pte-decode"
-
-[tool.flit.module]
-name = "pte_decode"
 
 [tool.black]
-exclude = '''
-/(
-  __pycache__
-)/
-'''
-include = '''
-(
-    /tests
-  | /src/
-)
-'''
 line-length = 79
-target-version = ['py310']
 
-[tool.isort]
-line_length = 79
-profile = "black"
-py_version = 310
-src_paths = ["pte_decode"]
-
-[tool.mypy]
-python_version = "3.10"
+[tool.hatch]
+version.path = "src/pte_decode/__init__.py"
+metadata.allow-direct-references = true
 
 [[tool.mypy.overrides]]
-ignore_missing_imports = true
 module = [
+  "bayes_opt",
+  "catboost",
+  "imblearn.*",
+  "joblib",
+  "matplotlib",
+  "matplotlib.*",
+  "mne",
+  "mne_bids",
+  "mne_bids.*",
+  "mpl_toolkits.axes_grid1",
   "numba",
+  "numpy",
+  "pandas",
+  "plotly",
+  "pte",
+  "py_neuromodulation",
+  "pte_stats",
+  "scipy",
+  "scipy.*",
+  "seaborn",
   "skimage",
+  "sklearn.*",
+  "statannotations",
+  "statannotations.*",
   "statsmodels.stats.multitest",
+  "xgboost",
 ]
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 79
+
+[tool.ruff.lint]
+select = [
+  # pycodestyle
+  "E",
+  # Pyflakes
+  "F",
+  # pyupgrade
+  "UP",
+  # flake8-bugbear
+  "B",
+  # flake8-simplify
+  "SIM",
+  # isort
+  "I",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401", "F403"]

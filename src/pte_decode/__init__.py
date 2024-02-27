@@ -1,28 +1,30 @@
-"""Modules for machine learning."""
+"""Package for decoding of neurophysiology data."""
 
 __version__ = "0.1.0"
 
-from .decoding.decoder_base import Decoder
-from .decoding.decoder_factory import get_decoder
+from .decoders import Decoder, get_decoder
 from .experiment import (
     DecodingExperiment,
-    outpath_predict,
     run_pipeline_multiproc,
 )
-from .features.feature_cleaning import FeatureCleaner
-from .features.feature_engineering import FeatureEngineer
-from .features.feature_epochs import FeatureEpochs
-from .features.feature_selection import FeatureSelector
-from .plotting.plot import (
-    lineplot_prediction,
-    lineplot_prediction_compare,
-    lineplot_prediction_single,
-    violinplot_results,
+from .features import (
+    FeatureCleaner,
+    FeatureEngineer,
+    FeatureEpochs,
+    FeatureSelector,
 )
-from .results.load import (
+from .plotting import (
+    boxplot_all_conds,
+    boxplot_results,
+    boxplot_updrs,
+    lineplot_compare,
+    lineplot_prediction,
+    lineplot_single,
+)
+from .results import (
+    get_earliest_timepoint,
     load_predictions,
     load_predictions_singlefile,
-    load_scores,
     load_results_singlechannel,
+    load_scores,
 )
-from .results.timepoint import get_earliest_timepoint

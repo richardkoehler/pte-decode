@@ -1,13 +1,52 @@
 """Module for extracting event-based features for decoding."""
+
 import gzip
-import pickle
+import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
+
+
+@dataclass
+class FeatureSelector:
+    """Select features based on keywords."""
+
+    feature_keywords: Sequence[str] | None
+    verbose: bool = False
+
+    def run(
+        self,
+        features: pd.DataFrame,
+        out_path: Path | str | None = None,
+    ) -> pd.DataFrame:
+        feature_picks = self._pick_by_keywords(features)
+
+        if out_path:
+            out_path = Path(out_path).resolve()
+            feature_picks.to_csv(
+                out_path / f"{out_path.stem}_FeaturesSelected.csv.gz",
+                index=False,
+            )
+
+        return feature_picks
+
+    def _pick_by_keywords(self, features: pd.DataFrame) -> pd.DataFrame:
+        """Process time points used."""
+        keywords = self.feature_keywords
+        if keywords is None:
+            return features
+        col_picks = []
+        for column in features.columns:
+            for keyword in keywords:
+                if keyword in column:
+                    col_picks.append(column)
+                    break
+        return features[col_picks]
 
 
 @dataclass
@@ -69,14 +108,17 @@ class FeatureEpochs:
             trial_ids_used=trials_used,
         )
         if out_path:
-            out_path = str(Path(out_path).resolve())
+            out_path = Path(out_path).resolve()
             features_concatenated.to_csv(
-                out_path + r"/FeaturesConcatenated.csv.gz", index=False
+                out_path / f"{out_path.stem}_FeaturesConcatenated.gz",
+                index=False,
             )
             with gzip.open(
-                out_path + r"/FeaturesTimelocked.pickle.gz", "wb"
+                out_path / f"{out_path.stem}_FeaturesTimelocked.json.gz",
+                "wt",
+                encoding="utf-8",
             ) as file:
-                pickle.dump(features_timelocked, file)
+                json.dump(features_timelocked, file)
 
         return (
             features_concatenated,
@@ -109,7 +151,7 @@ class FeatureEpochs:
             "plotting_target": [],
             "features": {column: [] for column in features.columns},
         }
-        for trial_id in trial_ids_used:
+        for trial_id in trial_ids_used.tolist():
             features_epoch = _get_prediction_epochs(
                 data=features.values,
                 trial_onsets=trial_onsets,
@@ -149,7 +191,7 @@ def _get_prediction_epochs(
     trial_id: int,
     ind_begin: int,
     ind_end: int,
-    dtype: npt.DTypeLike = np.float32,
+    dtype: npt.DTypeLike = np.float64,
     verbose: bool = False,
 ) -> np.ndarray:
     """Get epochs of data for making predictions."""
@@ -166,14 +208,15 @@ def _get_prediction_epochs(
     return np.atleast_1d([])
 
 
-def _convert_target_end(target_end) -> int | float | str:
-    if isinstance(target_end, str):
-        if target_end == "trial_onset":
-            return "trial_onset"
-        if target_end == "trial_onset":
-            return 0.0
+def _convert_target_end(
+    target_end,
+) -> int | float | Literal["trial_onset", "trial_end"]:
+    if not isinstance(target_end, int | float) and target_end not in [
+        "trial_onset",
+        "trial_end",
+    ]:
         raise ValueError(
-            "If target_end is a string, it must be "
+            "target_end must be an integer, a float or either "
             f"`trial_onset` or `trial_end`. Got: {target_end}."
         )
     return target_end
@@ -211,7 +254,7 @@ def _events_from_label(
     if data[-1] != 0:
         label_diff[-1] = -1
     trials = np.nonzero(label_diff)[0]
-    # Check for plausability of events
+    # Check for plausibility of events
     if len(trials) % 2:
         raise ValueError(
             "Number of events found is odd. Please check your label data."
@@ -247,7 +290,7 @@ def _get_trial_data(
     trial_onset: int,
     trial_end: int,
     target_begin: int,
-    target_end: int | str,
+    target_end: Literal["trial_onset", "trial_end"] | str,
     rest_begin: int,
     rest_end: int,
     dtype: Any,
@@ -285,7 +328,9 @@ def _get_trial_data(
 
 
 def _handle_target_end(
-    target_end: int | str, trial_onset: int, trial_end: int
+    target_end: int | Literal["trial_onset", "trial_end"],
+    trial_onset: int,
+    trial_end: int,
 ) -> int:
     """Handle different cases of target_end"""
     if isinstance(target_end, int):
@@ -311,28 +356,29 @@ def _get_features_concatenated(
     rest_end: int | float,
     offset_rest_begin: int | float,
     bad_epochs: np.ndarray | None,
-    dtype: Any = np.float32,
-) -> tuple[pd.DataFrame, np.ndarray, np.ndarray,]:
+    dtype: Any = np.float64,
+) -> tuple[
+    pd.DataFrame,
+    np.ndarray,
+    np.ndarray,
+]:
     """Get data by trials."""
-    data_arr = data.values
-
     offset_begin = int(offset_rest_begin * sfreq)
     rest_begin = int(rest_begin * sfreq)
     rest_end = int(rest_end * sfreq)
     target_begin = int(target_begin * sfreq)
 
-    if isinstance(target_end, (int, float)):
+    if isinstance(target_end, int | float):
         target_end = int(target_end * sfreq)
-
+    features: list = []
+    labels: list = []
     (
-        features,
-        labels,
         trial_ids,
         times,
         times_relative,
         trial_ids_used,
         trial_ids_discarded,
-    ) = ([], [], [], [], [], [], [])
+    ) = ([], [], [], [], [])
 
     for trial_id, (trial_onset, trial_end) in enumerate(
         zip(trial_onsets, trial_ends, strict=True)
@@ -353,7 +399,7 @@ def _get_features_concatenated(
             trial_ids_discarded.append(trial_id)
         else:
             data_rest, data_target, time_abs, time_rel = _get_trial_data(
-                data=data_arr,
+                data=data.values,
                 sfreq=sfreq,
                 trial_onset=trial_onset,
                 trial_end=trial_end,
@@ -388,4 +434,261 @@ def _get_features_concatenated(
         data_final,
         np.array(trial_ids_used),
         np.array(trial_ids_discarded),
+    )
+
+
+@dataclass
+class FeatureEngineer:
+    """Engineer features to use from given features."""
+
+    use_times: int = 1
+    normalization_mode: str | None = None
+    verbose: bool = False
+
+    def run(
+        self,
+        features: pd.DataFrame,
+        out_path: Path | str | None = None,
+    ) -> pd.DataFrame:
+        feat_names = list(features.columns)
+        features = self._process_use_times(features)
+
+        if self.normalization_mode is not None:
+            self._normalize(features, feat_names)
+
+        if out_path:
+            out_path = Path(out_path).resolve()
+            features.to_csv(
+                out_path / f"{out_path.stem}_FeaturesEngineered.csv.gz",
+                index=False,
+            )
+
+        return features
+
+    def _normalize(
+        self,
+        features: pd.DataFrame,
+        feat_basenames: list[str],
+    ) -> pd.DataFrame:
+        feat_names = features.columns.str
+        if self.normalization_mode == "by_earliest_sample":
+            feature_norms = [
+                f"{feat}_{(self.use_times - 1) * 100}ms"
+                for feat in feat_basenames
+            ]
+        elif self.normalization_mode == "by_latest_sample":
+            feature_norms = [f"{feat}_0ms" for feat in feat_basenames]
+        else:
+            raise ValueError(
+                "`normalization_mode` must be one of either "
+                "`by_earliest_sample` or `by_latest_sample`. Got: "
+                f"{self.normalization_mode}."
+            )
+        for basename, feat_norm in zip(
+            feat_basenames, feature_norms, strict=True
+        ):
+            picks = feat_names.startswith(basename)
+            features.loc[:, picks] = features.loc[:, picks].subtract(
+                features.loc[:, feat_norm].to_numpy(), axis="index"
+            )
+        features = features.drop(columns=feature_norms)
+        return features
+
+    def _process_use_times(self, features: pd.DataFrame) -> pd.DataFrame:
+        """Process time points used."""
+        if self.use_times <= 1:
+            return features
+        feat_processed = [
+            features.rename(
+                columns={col: f"{col}_0ms" for col in features.columns}
+            )
+        ]
+        # Use additional features from previous time points
+        # `use_times = 1` means no features from previous time points are used
+        for use_time in np.arange(1, self.use_times):
+            feat_new = features.shift(use_time, axis=0).rename(
+                columns={
+                    col: f"{col}_{(use_time) * 100}ms"
+                    for col in features.columns
+                }
+            )
+            feat_processed.append(feat_new)
+
+        return pd.concat(feat_processed, axis=1).fillna(0.0)
+
+
+@dataclass
+class FeatureCleaner:
+    """Clean features."""
+
+    data_channel_names: list[str]
+    data_channel_types: Sequence[str]
+    label_channels: Sequence[str]
+    plotting_target_channels: Sequence[str]
+    side: str | None = None
+    types_used: str | Sequence[str] = "all"
+    hemispheres_used: str = "both"
+    verbose: bool = False
+
+    def run(
+        self,
+        features: pd.DataFrame,
+        out_path: Path | str | None = None,
+    ) -> tuple[pd.DataFrame, pd.Series, pd.Series]:
+        channel_picks = self.data_channel_names
+        channel_picks = self._channels_by_types(channel_picks)
+        channel_picks = self._channels_by_hemisphere(channel_picks)
+
+        feature_picks = self._pick_by_channels(features, channel_picks)
+
+        # Get label for classification
+        label = pd.Series(
+            _get_column_picks(
+                column_picks=self.label_channels,
+                features=features,
+            ),
+            name="label",
+        )
+
+        # Pick target for plotting predictions
+        plotting_target = pd.Series(
+            _get_column_picks(
+                column_picks=self.plotting_target_channels,
+                features=features,
+            ),
+            name="plotting_target",
+        )
+
+        if out_path:
+            out_path = Path(out_path).resolve()
+
+            feature_picks.to_csv(
+                out_path / f"{out_path.stem}_FeaturesCleaned.csv.gz",
+                index=False,
+            )
+            label.to_csv(
+                out_path / f"{out_path.stem}_Label.csv.gz", index=False
+            )
+            label.to_csv(
+                out_path / f"{out_path.stem}_PlottingTarget.csv.gz",
+                index=False,
+            )
+
+        return feature_picks, label, plotting_target
+
+    def _pick_by_channels(
+        self, features: pd.DataFrame, channel_picks: list[str]
+    ) -> pd.DataFrame:
+        """Pick features by list of channels."""
+        col_picks = []
+        for column in features.columns:
+            for ch_name in channel_picks:
+                if ch_name in column:
+                    col_picks.append(column)
+                    break
+        return features[col_picks]
+
+    def _channels_by_types(self, ch_names: list[str]) -> list[str]:
+        """Process time points used."""
+        if self.types_used == "all":
+            return ch_names
+
+        if isinstance(self.types_used, str):
+            self.types_used = [self.types_used]
+
+        ch_picks = []
+        for ch_name, ch_type in zip(
+            self.data_channel_names, self.data_channel_types, strict=True
+        ):
+            if ch_type in self.types_used:
+                ch_picks.append(ch_name)
+        return ch_picks
+
+    def _channels_by_hemisphere(self, ch_names: list[str]) -> list[str]:
+        """Process time points used."""
+        if self.hemispheres_used == "both":
+            return ch_names
+        if self.hemispheres_used not in ("contralat", "ipsilat"):
+            raise ValueError(
+                "`hemispheres_used` must be `both`, `ipsilat` or `contralat`."
+                f" Got: {self.hemispheres_used}."
+            )
+        side = self.side
+        if side is None or side not in ("right", "left"):
+            raise ValueError(
+                "If hemispheres_used is not `both`, `trial_side`"
+                f" must be either `right` or `left`. Got: {side}."
+            )
+        ipsilat = {"right": "_R_", "left": "_L_"}
+        contralat = {"right": "_L_", "left": "_R_"}
+        hem = (
+            ipsilat[side]
+            if self.hemispheres_used == "ipsilat"
+            else contralat[side]
+        )
+
+        ch_picks = [ch for ch in ch_names if hem in ch]
+        return ch_picks
+
+
+def _transform_side(side: Literal["right", "left"]) -> str:
+    """Transform given keyword (eg 'right') to search string (eg 'R_')."""
+    if side == "right":
+        return "R_"
+    if side == "left":
+        return "L_"
+    raise ValueError(
+        f"Invalid argument for `side`. Must be right " f"or left. Got: {side}."
+    )
+
+
+def _init_channel_names(
+    ch_names: list,
+    use_channels: str,
+    side: Literal["right", "left"] | None = None,
+) -> list:
+    """Initialize channels to be used."""
+    case_all = ["single", "single_best", "all"]
+    case_contralateral = [
+        "single_contralat",
+        "single_best_contralat",
+        "all_contralat",
+    ]
+    case_ipsilateral = [
+        "single_ipsilat",
+        "single_best_ipsilat",
+        "all_ipsilat",
+    ]
+    if use_channels in case_all:
+        return ch_names
+    # If side is none but ipsi- or contralateral channels are selected
+    if side is None:
+        raise ValueError(
+            f"`use_channels`: {use_channels} defines a hemisphere, but "
+            f"`side` is not specified. Please pass `right` or `left` "
+            f"side or set use_channels to any of: {(*case_all,)}."
+        )
+    side = _transform_side(side)
+    if use_channels in case_contralateral:
+        return [ch for ch in ch_names if side not in ch]
+    if use_channels in case_ipsilateral:
+        return [ch for ch in ch_names if side in ch]
+    raise ValueError(
+        f"Invalid argument for `use_channels`. Must be one of "
+        f"{case_all+case_contralateral+case_ipsilateral}. Got: "
+        f"{use_channels}."
+    )
+
+
+def _get_column_picks(
+    column_picks: Sequence[str],
+    features: pd.DataFrame,
+) -> pd.Series:
+    """Return first found column pick from features DataFrame."""
+    for pick in column_picks:
+        for col in features.columns:
+            if pick.lower() in col.lower():
+                return pd.Series(data=features[col], name=col)
+    raise ValueError(
+        f"No valid column found. `column_picks` given: {column_picks}."
     )
