@@ -44,7 +44,6 @@ dependencies = [
   "seaborn",
   "statannotations",
   "xgboost",
-  "py-neuromodulation @ git+https://github.com/richardkoehler/py_neuromodulation.git@563ee46d66937ac25ddcb9e6d6350bfa5fbb397d",
 ]
 
 [project.optional-dependencies]
@@ -58,6 +57,8 @@ dev = [
   "pytest-cov",
   "ruff",
   "tox",
+]
+pynm = ["py-neuromodulation @ git+https://github.com/richardkoehler/py_neuromodulation.git@563ee46d66937ac25ddcb9e6d6350bfa5fbb397d",
 ]
 
 [tool.black]
