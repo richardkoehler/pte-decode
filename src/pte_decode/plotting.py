@@ -148,7 +148,7 @@ def boxplot_results(
     figsize: tuple[float, float] | Literal["auto"] = "auto",
     show: bool = True,
 ) -> figure.Figure:
-    """Plot performance as violinplot."""
+    """Plot results as combined boxplot and swarmplot."""
     if order is None:
         order = list(data[x].unique())
 
@@ -182,19 +182,6 @@ def boxplot_results(
         ax=ax,
     )
 
-    # ax = sns.violinplot(
-    #     x=x,
-    #     y=y,
-    #     hue=hue,
-    #     order=order,
-    #     hue_order=hue_order,
-    #     data=data,
-    #     inner="box",
-    #     width=0.9,
-    #     alpha=1.0,
-    #     cut=0.2,
-    #     ax=ax,
-    # )
     ax = sns.boxplot(
         x=x,
         y=y,
@@ -797,7 +784,7 @@ def _pval_correction_lineplot(
         )
         time_0 = x_labels[lims[0]]
         time_1 = x_labels[lims[-1]]
-        print(f"Cluster found between {time_0}s and" f" {time_1}s.")
+        print(f"Cluster found between {time_0}s and {time_1}s.")
         label = None  # Avoid printing label multiple times
         if not text_annotated:
             ax.text(
